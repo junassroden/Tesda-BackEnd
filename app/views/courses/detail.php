@@ -8,35 +8,27 @@
 </head>
 <body>
     <div class="app-layout">
-        <aside class="sidebar">
-            <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
-            <?php if ($role === 'student'): ?>
+        <?php if (in_array($role, ['admin', 'center_admin'], true)): ?>
+            <?php $sidebar_active_page = 'courses'; include __DIR__ . '/../partials/management_sidebar.php'; ?>
+        <?php elseif ($role === 'student'): ?>
+            <aside class="sidebar">
+                <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
                 <nav class="side-nav" aria-label="Student navigation">
                     <a href="<?= site_url('/dashboard'); ?>">Dashboard</a>
                     <a href="<?= site_url('/my-courses'); ?>" aria-current="page">My courses</a>
                     <a href="<?= site_url('/student-profile'); ?>">My profile</a>
                 </nav>
-            <?php elseif ($role === 'instructor'): ?>
+                <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
+            </aside>
+        <?php else: ?>
+            <aside class="sidebar">
+                <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
                 <nav class="side-nav" aria-label="Instructor navigation">
                     <a href="<?= site_url('/instructor'); ?>">Instructor portal</a>
                 </nav>
-            <?php elseif ($role === 'admin'): ?>
-                <nav class="side-nav" aria-label="Administration">
-                    <a href="<?= site_url('/dashboard'); ?>">Analytics</a>
-                    <a href="<?= site_url('/show-users'); ?>">Manage users</a>
-                    <a href="<?= site_url('/admin/courses'); ?>" aria-current="page">Manage NC courses</a>
-                    <a href="<?= site_url('/admin/centers'); ?>">Training centers</a>
-                </nav>
-            <?php else: ?>
-                <nav class="side-nav" aria-label="Training center administration">
-                    <a href="<?= site_url('/dashboard'); ?>">Center overview</a>
-                    <a href="<?= site_url('/center/applications'); ?>">Applications</a>
-                    <a href="<?= site_url('/show-users'); ?>">Manage users</a>
-                    <a href="<?= site_url('/admin/courses'); ?>" aria-current="page">Manage NC courses</a>
-                </nav>
-            <?php endif; ?>
-            <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
-        </aside>
+                <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
+            </aside>
+        <?php endif; ?>
         <div class="workspace">
             <header class="app-header">
                 <p><?= $role === 'student' ? 'Student services' : ($role === 'instructor' ? 'Instructor services' : ($role === 'center_admin' ? 'Center administration' : 'Administration')); ?></p>

@@ -34,8 +34,18 @@ $router->group(['middleware' => ['AuthMiddleware', 'StaffAdminMiddleware']], fun
 });
 
 $router->group(['middleware' => ['AuthMiddleware', 'AdminMiddleware']], function ($router) {
+    $router->get('/admin/document-ai', 'DocumentAIController::index');
+    $router->post('/admin/document-ai', 'DocumentAIController::index');
+    $router->post('/admin/document-ai/sample', 'DocumentAIController::sample');
+    $router->post('/admin/document-ai/text', 'DocumentAIController::classify_text');
     $router->get('/admin/centers', 'TrainingCenterController::index');
     $router->post('/admin/centers', 'TrainingCenterController::index');
+});
+
+$router->group(['middleware' => ['AuthMiddleware', 'StaffAdminMiddleware']], function ($router) {
+    $router->get('/documents', 'DocumentArchiveController::index');
+    $router->post('/documents', 'DocumentArchiveController::index');
+    $router->get('/documents/download/{id}', 'DocumentArchiveController::download');
 });
 
 $router->group(['middleware' => ['AuthMiddleware', 'CenterAdminMiddleware']], function ($router) {

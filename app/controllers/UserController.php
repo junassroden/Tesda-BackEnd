@@ -23,6 +23,7 @@ class UserController extends Controller
         $data['notification'] = $this->session->flashdata('notification');
         $data['current_user_id'] = (int) $this->session->userdata('id');
         $data['is_center_admin'] = $this->is_center_admin();
+        $data['can_access_document_archive'] = $this->can_access_document_archive();
         $this->call->view('users/index', $data);
     }
 
@@ -31,7 +32,8 @@ class UserController extends Controller
             'errors' => [],
             'account' => [],
             'training_centers' => $this->form_centers(),
-            'is_center_admin' => $this->is_center_admin()
+            'is_center_admin' => $this->is_center_admin(),
+            'can_access_document_archive' => $this->can_access_document_archive()
         ];
         if ($this->form_validation->submitted()) {
             $account = $this->account_input();
@@ -69,7 +71,8 @@ class UserController extends Controller
             'errors' => [],
             'account' => $user,
             'training_centers' => $this->form_centers(),
-            'is_center_admin' => $this->is_center_admin()
+            'is_center_admin' => $this->is_center_admin(),
+            'can_access_document_archive' => $this->can_access_document_archive()
         ];
         if ($this->form_validation->submitted()) {
             $account = $this->account_input();
@@ -174,6 +177,16 @@ class UserController extends Controller
 
    private function is_center_admin() {
         return $this->session->userdata('user_role') === 'center_admin';
+   }
+
+   private function can_access_document_archive()
+   {
+       if (!$this->is_center_admin()) {
+           return false;
+       }
+       return $this->TrainingCenterModel->is_main_office(
+           (int) $this->session->userdata('training_center_id')
+       );
    }
 
    private function form_centers() {

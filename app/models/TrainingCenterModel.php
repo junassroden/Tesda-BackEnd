@@ -24,6 +24,17 @@ class TrainingCenterModel extends Model
             ->get();
     }
 
+    public function is_main_office($id)
+    {
+        $center = $this->db->raw(
+            'SELECT center_code FROM training_centers
+             WHERE id = ? AND is_active = 1
+             LIMIT 1',
+            [(int) $id]
+        )->fetch(PDO::FETCH_ASSOC);
+        return ($center['center_code'] ?? '') === 'TESDA-MAIN';
+    }
+
     public function all_with_counts()
     {
         return $this->db->raw(

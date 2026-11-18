@@ -9,20 +9,7 @@
 </head>
 <body>
     <div class="app-layout">
-        <aside class="sidebar">
-            <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
-            <nav class="side-nav" aria-label="Administration">
-                <a href="<?= site_url('/dashboard'); ?>"><?= !empty($is_center_admin) ? 'Center overview' : 'Analytics'; ?></a>
-                <?php if (!empty($is_center_admin)): ?><a href="<?= site_url('/center/applications'); ?>">Applications</a><?php endif; ?>
-                <a href="<?= site_url('/show-users'); ?>">Manage users</a>
-                <a href="<?= site_url('/admin/courses'); ?>" aria-current="page">Manage NC courses</a>
-                <?php if (empty($is_center_admin)): ?>
-                    <a href="<?= site_url('/admin/centers'); ?>">Training centers</a>
-                    <a href="<?= site_url('/products'); ?>">Manage inventory</a>
-                <?php endif; ?>
-            </nav>
-            <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
-        </aside>
+        <?php $sidebar_active_page = 'courses'; include __DIR__ . '/../partials/management_sidebar.php'; ?>
         <div class="workspace">
             <header class="app-header"><p>NC course management</p><a class="button button-secondary button-small" href="<?= site_url('/admin/courses'); ?>">Back to courses</a></header>
             <main class="page-content role-page role-form-page">

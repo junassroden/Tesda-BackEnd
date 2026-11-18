@@ -21,6 +21,7 @@ class CourseController extends Controller
         $this->call->view('courses/index', [
             'courses' => $this->CourseModel->all($centerId),
             'is_center_admin' => $this->is_center_admin(),
+            'can_access_document_archive' => $this->can_access_document_archive(),
             'notification' => $this->session->flashdata('notification')
         ]);
     }
@@ -59,6 +60,7 @@ class CourseController extends Controller
         $this->call->view('courses/detail', [
             'course' => $course,
             'role' => $role,
+            'can_access_document_archive' => $this->can_access_document_archive(),
             'enrollment' => $enrollment,
             'roster' => $role === 'student'
                 ? []
@@ -182,6 +184,7 @@ class CourseController extends Controller
             'course' => $course ?: [],
             'training_centers' => $centers,
             'is_center_admin' => $this->is_center_admin(),
+            'can_access_document_archive' => $this->can_access_document_archive(),
             'errors' => [],
             'form_action' => site_url($id === null
                 ? '/admin/courses/create'
@@ -289,6 +292,16 @@ class CourseController extends Controller
     private function is_center_admin()
     {
         return $this->session->userdata('user_role') === 'center_admin';
+    }
+
+    private function can_access_document_archive()
+    {
+        if (!$this->is_center_admin()) {
+            return false;
+        }
+        return $this->TrainingCenterModel->is_main_office(
+            (int) $this->session->userdata('training_center_id')
+        );
     }
 
     private function find_manageable_course($id)

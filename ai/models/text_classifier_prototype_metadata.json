@@ -1,0 +1,26 @@
+{
+  "model_type": "TF-IDF + LinearSVC",
+  "dataset": "outputs\\ocr_dataset\\train_ocr_1000.csv",
+  "documents_used": 944,
+  "training_documents": 708,
+  "test_documents": 236,
+  "accuracy": 0.5889830508474576,
+  "categories": [
+    "advertisement",
+    "budget",
+    "email",
+    "file_folder",
+    "form",
+    "handwritten",
+    "invoice",
+    "letter",
+    "memo",
+    "news_article",
+    "presentation",
+    "questionnaire",
+    "resume",
+    "scientific_publication",
+    "scientific_report",
+    "specification"
+  ]
+}

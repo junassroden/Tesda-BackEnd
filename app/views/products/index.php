@@ -8,27 +8,25 @@
 </head>
 <body>
     <div class="app-layout">
-        <aside class="sidebar">
-            <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
-            <nav class="side-nav" aria-label="Main navigation">
-                <?php if (($user_role ?? '') === 'admin'): ?>
-                    <a href="<?= site_url('/dashboard'); ?>">Analytics</a>
-                    <a href="<?= site_url('/show-users'); ?>">Manage users</a>
-                    <a href="<?= site_url('/admin/courses'); ?>">Manage NC courses</a>
-                    <a href="<?= site_url('/admin/centers'); ?>">Training centers</a>
-                    <a href="<?= site_url('/products'); ?>" aria-current="page">Manage inventory</a>
-                <?php elseif (($user_role ?? '') === 'instructor'): ?>
+        <?php if (($user_role ?? '') === 'admin'): ?>
+            <?php $sidebar_active_page = 'inventory'; include __DIR__ . '/../partials/management_sidebar.php'; ?>
+        <?php else: ?>
+            <aside class="sidebar">
+                <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
+                <nav class="side-nav" aria-label="Main navigation">
+                    <?php if (($user_role ?? '') === 'instructor'): ?>
                     <a href="<?= site_url('/instructor'); ?>">Instructor portal</a>
                     <a href="<?= site_url('/products'); ?>" aria-current="page">Inventory</a>
-                <?php else: ?>
+                    <?php else: ?>
                     <a href="<?= site_url('/dashboard'); ?>">Dashboard</a>
                     <a href="<?= site_url('/my-courses'); ?>">My courses</a>
                     <a href="<?= site_url('/student-profile'); ?>">My profile</a>
                     <a href="<?= site_url('/products'); ?>" aria-current="page">Inventory</a>
-                <?php endif; ?>
-            </nav>
-            <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
-        </aside>
+                    <?php endif; ?>
+                </nav>
+                <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
+            </aside>
+        <?php endif; ?>
         <div class="workspace">
             <header class="app-header"><p>TESDA student services</p><span class="user-chip"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">Inventory</span></header>
             <main class="page-content">

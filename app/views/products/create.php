@@ -8,16 +8,7 @@
 </head>
 <body>
     <div class="app-layout">
-        <aside class="sidebar">
-            <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
-            <nav class="side-nav" aria-label="Administration">
-                <a href="<?= site_url('/dashboard'); ?>">Analytics</a>
-                <a href="<?= site_url('/show-users'); ?>">Manage users</a>
-                <a href="<?= site_url('/admin/courses'); ?>">Manage NC courses</a>
-                <a href="<?= site_url('/products'); ?>" aria-current="page">Manage inventory</a>
-            </nav>
-            <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
-        </aside>
+        <?php $sidebar_active_page = 'inventory'; include __DIR__ . '/../partials/management_sidebar.php'; ?>
         <div class="workspace">
             <header class="app-header"><p>Inventory</p><a class="button button-secondary button-small" href="<?= site_url('/products'); ?>">Back to inventory</a></header>
             <main class="page-content">

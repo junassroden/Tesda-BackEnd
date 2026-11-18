@@ -8,16 +8,7 @@
 </head>
 <body>
     <div class="app-layout">
-        <aside class="sidebar">
-            <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
-            <nav class="side-nav" aria-label="Training center administration">
-                <a href="<?= site_url('/dashboard'); ?>" aria-current="page">Center overview</a>
-                <a href="<?= site_url('/center/applications'); ?>">Applications</a>
-                <a href="<?= site_url('/show-users'); ?>">Manage users</a>
-                <a href="<?= site_url('/admin/courses'); ?>">Manage NC courses</a>
-            </nav>
-            <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
-        </aside>
+        <?php $sidebar_active_page = 'center-overview'; include __DIR__ . '/../partials/management_sidebar.php'; ?>
         <div class="workspace">
             <header class="app-header"><p>Center administration</p><span class="user-chip"><?= htmlspecialchars($center_name ?: 'Training center', ENT_QUOTES, 'UTF-8'); ?></span></header>
             <main class="page-content role-page role-admin">
@@ -40,6 +31,9 @@
                             <a class="list-row admin-action-link" href="<?= site_url('/center/applications'); ?>"><strong>Review applications</strong><span><?= (int) $analytics['applications']; ?> pending student and instructor applications</span></a>
                             <a class="list-row admin-action-link" href="<?= site_url('/show-users'); ?>"><strong>Manage center accounts</strong><span>Update student and instructor accounts assigned here</span></a>
                             <a class="list-row admin-action-link" href="<?= site_url('/admin/courses'); ?>"><strong>Manage NC courses</strong><span>Maintain this center's course details and schedules</span></a>
+                            <?php if (!empty($can_access_document_archive)): ?>
+                                <a class="list-row admin-action-link" href="<?= site_url('/documents'); ?>"><strong>Document archive</strong><span>Store and find documents for the TESDA main office</span></a>
+                            <?php endif; ?>
                         </div>
                     </section>
                     <section class="panel role-panel access-panel">

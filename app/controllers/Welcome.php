@@ -33,10 +33,12 @@ class Welcome extends Controller {
 
 		if ($role === 'center_admin') {
 			$centerId = (int) $this->session->userdata('training_center_id');
+			$this->call->model('TrainingCenterModel');
 			$this->call->model('CourseModel');
 			$this->call->model('UserModel');
 			$this->call->model('CenterApplicationModel');
 			$data['center_name'] = $this->session->userdata('training_center_name');
+			$data['can_access_document_archive'] = $this->TrainingCenterModel->is_main_office($centerId);
 			$data['analytics'] = [
 				'students' => $this->UserModel->count_by_role('student', $centerId),
 				'instructors' => $this->UserModel->count_by_role('instructor', $centerId),

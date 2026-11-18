@@ -8,17 +8,7 @@
 </head>
 <body>
     <div class="app-layout">
-        <aside class="sidebar">
-            <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
-            <nav class="side-nav" aria-label="Administration">
-                <a href="<?= site_url('/dashboard'); ?>">Analytics</a>
-                <a href="<?= site_url('/show-users'); ?>">Manage users</a>
-                <a href="<?= site_url('/admin/courses'); ?>">Manage NC courses</a>
-                <a href="<?= site_url('/admin/centers'); ?>" aria-current="page">Training centers</a>
-                <a href="<?= site_url('/products'); ?>">Manage inventory</a>
-            </nav>
-            <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
-        </aside>
+        <?php $sidebar_active_page = 'centers'; include __DIR__ . '/../partials/management_sidebar.php'; ?>
         <div class="workspace">
             <header class="app-header"><p>Administration</p><span class="user-chip">Training centers</span></header>
             <main class="page-content role-page role-centers">

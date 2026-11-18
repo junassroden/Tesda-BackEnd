@@ -8,17 +8,7 @@
 </head>
 <body>
     <div class="app-layout">
-        <aside class="sidebar">
-            <a class="brand" href="<?= site_url('/dashboard'); ?>"><img src="<?= site_url('/images/tsda.jpg'); ?>" alt="">TESDA NEXUS</a>
-            <nav class="side-nav" aria-label="Administration">
-                <a href="<?= site_url('/dashboard'); ?>" aria-current="page">Analytics</a>
-                <a href="<?= site_url('/show-users'); ?>">Manage users</a>
-                <a href="<?= site_url('/admin/courses'); ?>">Manage NC courses</a>
-                <a href="<?= site_url('/admin/centers'); ?>">Training centers</a>
-                <a href="<?= site_url('/products'); ?>">Manage inventory</a>
-            </nav>
-            <div class="sidebar-bottom side-nav"><a href="<?= site_url('/logout'); ?>">Log out</a></div>
-        </aside>
+        <?php $sidebar_active_page = 'analytics'; include __DIR__ . '/../partials/management_sidebar.php'; ?>
         <div class="workspace">
             <header class="app-header">
                 <p>Administration</p>
@@ -45,6 +35,8 @@
                             <a class="list-row admin-action-link" href="<?= site_url('/admin/courses'); ?>"><strong>NC course catalog</strong><span>Create and update training courses</span></a>
                             <a class="list-row admin-action-link" href="<?= site_url('/admin/centers'); ?>"><strong>Training centers</strong><span>Set up locations and assign local offerings</span></a>
                             <a class="list-row admin-action-link" href="<?= site_url('/products'); ?>"><strong>Inventory</strong><span><?= (int) $analytics['products']; ?> items in the catalog</span></a>
+                            <a class="list-row admin-action-link" href="<?= site_url('/documents'); ?>"><strong>Document archive</strong><span>Store OCR-checked files and retrieve them with local search</span></a>
+                            <a class="list-row admin-action-link" href="<?= site_url('/admin/document-ai'); ?>"><strong>Document AI lab</strong><span>Test document classification and OCR with your trained models</span></a>
                         </div>
                     </section>
                     <section class="panel role-panel access-panel">

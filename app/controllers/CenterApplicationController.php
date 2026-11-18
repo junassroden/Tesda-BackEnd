@@ -7,6 +7,7 @@ class CenterApplicationController extends Controller
     {
         parent::__construct();
         $this->call->model('CenterApplicationModel');
+        $this->call->model('TrainingCenterModel');
     }
 
     public function index()
@@ -15,6 +16,8 @@ class CenterApplicationController extends Controller
         $this->call->view('center_admin/applications', [
             'applications' => $this->CenterApplicationModel->pending_for_center($centerId),
             'center_name' => $this->session->userdata('training_center_name'),
+            'is_center_admin' => true,
+            'can_access_document_archive' => $this->TrainingCenterModel->is_main_office($centerId),
             'notification' => $this->session->flashdata('notification')
         ]);
     }

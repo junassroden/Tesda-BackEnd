@@ -1,0 +1,537 @@
+<?php
+defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
+
+require_once APP_DIR . 'libraries/DocumentAIService.php';
+
+class DocumentArchiveController extends Controller
+{
+    private $documentAI;
+    private $archiveDirectory;
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->call->model('DocumentArchiveModel');
+        $this->documentAI = new DocumentAIService();
+        $this->archiveDirectory = ROOT_DIR . 'runtime' . DIRECTORY_SEPARATOR . 'document-archive';
+    }
+
+    public function index()
+    {
+        $this->require_archive_access();
+        $center = $this->DocumentArchiveModel->central_office();
+        if (!$center) {
+            show_error(
+                'Document archive unavailable',
+                'The TESDA main office record is missing or inactive. Run the document archive SQL setup.',
+                'error_general',
+                500
+            );
+            return;
+        }
+
+        $centerId = (int) $center['id'];
+        $question = $_POST['question'] ?? '';
+        $csrfToken = $this->csrf_token();
+        $chatMessages = $this->session->userdata('document_chat_history');
+        $data = [
+            'documents' => [],
+            'question' => is_string($question) ? trim($question) : '',
+            'csrf_token' => $csrfToken,
+            'chat_messages' => is_array($chatMessages) ? $chatMessages : [],
+            'chat_open' => $this->session->flashdata('document_chat_open'),
+            'chat_notice' => $this->session->flashdata('document_chat_notice'),
+            'chat_error' => '',
+            'error' => '',
+            'success' => $this->session->flashdata('document_archive_success'),
+            'total_documents' => $this->DocumentArchiveModel->count($centerId),
+            'username' => $this->session->userdata('username'),
+            'user_role' => $this->session->userdata('user_role'),
+            'active_page' => 'document-archive'
+        ];
+
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+            $submittedToken = $_POST['archive_token'] ?? '';
+            if (!is_string($submittedToken) || !hash_equals($csrfToken, $submittedToken)) {
+                if (array_key_exists('question', $_POST)) {
+                    $data['chat_error'] = 'Your form session expired. Reload the page and try again.';
+                    $data['chat_open'] = true;
+                } else {
+                    $data['error'] = 'Your form session expired. Reload the page and try again.';
+                }
+            } elseif (array_key_exists('document_file', $_FILES)) {
+                $upload = $_FILES['document_file'];
+                $validationError = $this->validate_upload($upload);
+                if ($validationError !== null) {
+                    $data['error'] = $validationError;
+                } else {
+                    $this->process_upload($upload, $centerId, $data);
+                }
+            } elseif (array_key_exists('clear_chat', $_POST)) {
+                $this->session->unset_userdata([
+                    'document_chat_history',
+                    'document_chat_document_ids'
+                ]);
+                $this->session->set_flashdata('document_chat_notice', 'Chat history cleared.');
+                $this->session->set_flashdata('document_chat_open', true);
+                header('Location: ' . site_url('/documents#archive-chat'));
+                exit;
+            } elseif (array_key_exists('question', $_POST)) {
+                $this->process_chat($data, $centerId);
+            } else {
+                $data['error'] = 'Choose a document image to archive or enter a search question.';
+            }
+        }
+
+        $data['documents'] = $this->DocumentArchiveModel->recent($centerId);
+        $this->call->view('documents/archive', $data);
+    }
+
+    public function download($id)
+    {
+        $this->require_archive_access();
+        $center = $this->DocumentArchiveModel->central_office();
+        $document = $center
+            ? $this->DocumentArchiveModel->find((int) $id, (int) $center['id'])
+            : null;
+        if (!$document) {
+            show_404();
+            return;
+        }
+
+        $path = $this->archiveDirectory . DIRECTORY_SEPARATOR . $document['storage_key'];
+        $realDirectory = realpath($this->archiveDirectory);
+        $realPath = realpath($path);
+        if (
+            $realDirectory === false
+            || $realPath === false
+            || strpos($realPath, $realDirectory . DIRECTORY_SEPARATOR) !== 0
+            || !is_file($realPath)
+        ) {
+            error_log('Document archive file is missing or outside its storage directory: ' . (int) $id);
+            show_404();
+            return;
+        }
+
+        $file = new finfo(FILEINFO_MIME_TYPE);
+        $mimeType = $file->file($realPath) ?: 'application/octet-stream';
+        $downloadName = preg_replace('/[\r\n"\\\\]/', '_', basename($document['original_name']));
+        header('Content-Type: ' . $mimeType);
+        header('Content-Length: ' . (string) filesize($realPath));
+        header('Content-Disposition: attachment; filename="' . $downloadName . '"; filename*=UTF-8\'\'' . rawurlencode($document['original_name']));
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, no-store');
+        readfile($realPath);
+        exit;
+    }
+
+    private function process_upload($upload, $centerId, &$data)
+    {
+        $data['question'] = '';
+        try {
+            if ($upload['mime_type'] === 'application/pdf') {
+                set_time_limit(0);
+                $analysis = $this->documentAI->analyze_pdf($upload['tmp_name']);
+            } else {
+                $analysis = $this->documentAI->analyze_image($upload['tmp_name']);
+            }
+            try {
+                $storageKey = bin2hex(random_bytes(16)) . $this->extension_for_mime($upload['mime_type']);
+            } catch (Exception $error) {
+                throw new RuntimeException('A secure archive filename could not be generated.', 0, $error);
+            }
+            if (!is_dir($this->archiveDirectory)
+                && !mkdir($this->archiveDirectory, 0700, true)
+                && !is_dir($this->archiveDirectory)) {
+                throw new RuntimeException('The private document storage directory could not be created.');
+            }
+
+            $destination = $this->archiveDirectory . DIRECTORY_SEPARATOR . $storageKey;
+            if (!move_uploaded_file($upload['tmp_name'], $destination)) {
+                throw new RuntimeException('The uploaded file could not be moved into private storage.');
+            }
+
+            try {
+                $this->DocumentArchiveModel->create([
+                    'training_center_id' => $centerId,
+                    'uploaded_by' => (int) $this->session->userdata('user_id'),
+                    'storage_key' => $storageKey,
+                    'original_name' => $this->safe_original_name($upload['name']),
+                    'mime_type' => $upload['mime_type'],
+                    'file_size' => (int) $upload['size'],
+                    'ocr_text' => $analysis['ocr']['text'] ?? '',
+                    'ocr_error' => $analysis['ocr']['error'] ?? null,
+                    'image_label' => $analysis['image_classification']['label'] ?? null,
+                    'text_label' => $analysis['text_classification']['label'] ?? null
+                ]);
+            } catch (Throwable $error) {
+                if (is_file($destination) && !unlink($destination)) {
+                    error_log('Could not remove an unindexed document archive file: ' . $storageKey);
+                }
+                throw new RuntimeException('The document was analyzed but could not be added to the archive.', 0, $error);
+            }
+
+            $pagesAnalyzed = (int) ($analysis['pages_analyzed'] ?? 1);
+            $this->session->set_flashdata(
+                'document_archive_success',
+                'Document saved. OCR processed ' . $pagesAnalyzed
+                    . ($pagesAnalyzed === 1 ? ' page' : ' pages')
+                    . ' and extracted ' . str_word_count($analysis['ocr']['text'] ?? '') . ' words.'
+            );
+            header('Location: ' . site_url('/documents'));
+            exit;
+        } catch (RuntimeException $error) {
+            $data['error'] = $error->getMessage();
+            error_log('Document archive upload failed: ' . $error->getMessage());
+        }
+    }
+
+    private function process_chat(&$data, $centerId)
+    {
+        $question = $data['question'];
+        if ($question === '' || mb_strlen($question, 'UTF-8') > 240) {
+            $data['chat_error'] = $question === ''
+                ? 'Enter a message so I know what to look for.'
+                : 'Keep your message under 240 characters.';
+            $data['chat_open'] = true;
+            return;
+        }
+
+        $messages = $data['chat_messages'];
+        $messages[] = [
+            'role' => 'user',
+            'text' => $question,
+            'documents' => []
+        ];
+        $response = $this->respond_to_chat($question, $centerId);
+        $messages[] = [
+            'role' => 'assistant',
+            'text' => $response['text'],
+            'documents' => $response['documents']
+        ];
+        $this->session->set_userdata('document_chat_history', array_slice($messages, -20));
+        $this->session->set_flashdata('document_chat_open', true);
+        header('Location: ' . site_url('/documents#archive-chat'));
+        exit;
+    }
+
+    private function respond_to_chat($question, $centerId)
+    {
+        $normalizedQuestion = strtolower(trim($question));
+        if (preg_match('/\b(?:is this|is it)\s+working\b|\bare you (?:there|working|online)\b|\bcan you hear me\b/i', $question)) {
+            return [
+                'text' => 'Yes, I am here and working. I can search the archive by filename or words printed on a document.',
+                'documents' => []
+            ];
+        }
+        if (preg_match('/^(hi|hello|hey|good morning|good afternoon|good evening)(?:\s+there)?[.!?,\s]*$/', $normalizedQuestion)) {
+            return [
+                'text' => 'Hello. Tell me a filename or a few words from the document, and I will search the archive.',
+                'documents' => []
+            ];
+        }
+        if (preg_match('/^(?:can you help(?: me)?|what can you do)[.!?\s]*$/i', trim($question))) {
+            return [
+                'text' => 'I can find archived documents using their filename or words extracted by OCR. Include a name or a few words to search.',
+                'documents' => []
+            ];
+        }
+        if (preg_match('/\b(?:what did i ask|what was my question|repeat my last question)\b/i', $question)) {
+            $lastQuestion = $this->last_user_question();
+            return [
+                'text' => $lastQuestion !== ''
+                    ? 'You asked: "' . $lastQuestion . '"'
+                    : 'We have not exchanged a question yet. Tell me what document you are looking for.',
+                'documents' => []
+            ];
+        }
+        if (preg_match('/^(thanks|thank you|thanks a lot|i appreciate it)[.!?\s]*$/', $normalizedQuestion)) {
+            return [
+                'text' => 'You are welcome. Let me know if you need help finding another document.',
+                'documents' => []
+            ];
+        }
+
+        $searchQuestion = preg_replace('/^(?:hi|hello|hey)(?:\s+there)?[\s,!.?]*/i', '', $question);
+        $terms = $this->search_terms($searchQuestion);
+        $isDocumentRequest = preg_match('/\b(get|download|open|send|give|retrieve|access|have|view|share)\b/i', $question);
+        if (!$terms && $isDocumentRequest) {
+            $documents = $this->remembered_chat_documents($centerId);
+            if (!$documents) {
+                $documents = $this->single_archive_document($centerId);
+            }
+            return $documents
+                ? ['text' => 'Of course. Here is the document from the archive:', 'documents' => [$documents[0]]]
+                : ['text' => 'Of course. Tell me the filename or a few words from the document, and I will look it up.', 'documents' => []];
+        }
+
+        if (
+            !$terms
+            && preg_match('/\b(that|this|it|same|last|previous|one)\b/i', $question)
+        ) {
+            $documents = $this->remembered_chat_documents($centerId);
+            if (!$documents) {
+                $documents = $this->single_archive_document($centerId);
+            }
+            if ($documents) {
+                return [
+                    'text' => 'We were looking at this document:',
+                    'documents' => [$documents[0]]
+                ];
+            }
+        }
+
+        if (!$terms) {
+            $documents = $this->remembered_chat_documents($centerId);
+            if (!$documents) {
+                $documents = $this->single_archive_document($centerId);
+            }
+            if (
+                $documents
+                && preg_match('/\b(where|which|what|uploaded|upload|document|file)\b/i', $question)
+            ) {
+                return [
+                    'text' => 'There is one document in the archive. This may be the one you mean:',
+                    'documents' => [$documents[0]]
+                ];
+            }
+            return [
+                'text' => 'Of course. Share a filename or a few words printed on the document, and I will search for it.',
+                'documents' => []
+            ];
+        }
+
+        $matches = $this->DocumentArchiveModel->search($centerId, $terms);
+        if (!$matches) {
+            $documents = $this->single_archive_document($centerId);
+            if ($documents) {
+                return [
+                    'text' => 'I could not match those words exactly, but there is one document in the archive. Could this be the one?',
+                    'documents' => $documents
+                ];
+            }
+            return [
+                'text' => 'I could not find a match. Try a phrase from the filename or words printed on the document.',
+                'documents' => []
+            ];
+        }
+
+        $documents = [];
+        foreach (array_slice($matches, 0, 3) as $match) {
+            $documents[] = [
+                'id' => (int) $match['id'],
+                'original_name' => (string) $match['original_name']
+            ];
+        }
+        $this->remember_documents_in_chat($documents);
+
+        return [
+            'text' => 'I found ' . count($matches) . ' matching document'
+                . (count($matches) === 1 ? ':' : 's. Here are the closest matches:'),
+            'documents' => $documents
+        ];
+    }
+
+    private function single_archive_document($centerId)
+    {
+        $document = $this->DocumentArchiveModel->single_document((int) $centerId);
+        if (!$document) {
+            return [];
+        }
+
+        $summary = [
+            'id' => (int) $document['id'],
+            'original_name' => (string) $document['original_name']
+        ];
+        $this->remember_documents_in_chat([$summary]);
+        return [$summary];
+    }
+
+    private function remember_documents_in_chat($documents)
+    {
+        $this->session->set_userdata(
+            'document_chat_document_ids',
+            array_column($documents, 'id')
+        );
+    }
+
+    private function search_terms($question)
+    {
+        $stopWords = [
+            'a', 'about', 'after', 'ago', 'and', 'are', 'can', 'could', 'day',
+            'days', 'did', 'document', 'documents', 'download', 'file', 'files',
+            'find', 'for', 'from', 'get', 'give', 'have', 'help', 'i', 'in', 'is',
+            'it', 'last', 'link', 'links', 'me', 'month', 'my', 'of', 'on', 'open',
+            'please', 'retrieve', 'same', 'send', 'share', 'show', 'tell', 'the',
+            'this', 'to', 'today', 'upload', 'uploaded', 'view', 'was', 'were',
+            'week', 'where', 'which', 'with', 'you', 'your', 'yesterday', 'access',
+            'few', 'who', 'one', 'that', 'what'
+        ];
+        $words = preg_split('/[^a-z0-9._-]+/i', strtolower($question), -1, PREG_SPLIT_NO_EMPTY);
+        $terms = [];
+        foreach ($words as $word) {
+            if (strlen($word) > 1 && !in_array($word, $stopWords, true) && !in_array($word, $terms, true)) {
+                $terms[] = $word;
+            }
+            if (count($terms) >= 6) {
+                break;
+            }
+        }
+        return $terms;
+    }
+
+    private function last_user_question()
+    {
+        $messages = $this->session->userdata('document_chat_history');
+        if (!is_array($messages)) {
+            return '';
+        }
+        for ($index = count($messages) - 1; $index >= 0; $index--) {
+            if (
+                isset($messages[$index]['role'], $messages[$index]['text'])
+                && $messages[$index]['role'] === 'user'
+                && is_string($messages[$index]['text'])
+            ) {
+                return $messages[$index]['text'];
+            }
+        }
+        return '';
+    }
+
+    private function remembered_chat_documents($centerId)
+    {
+        $documentIds = $this->session->userdata('document_chat_document_ids');
+        if (!is_array($documentIds)) {
+            return [];
+        }
+
+        $documents = [];
+        foreach (array_slice($documentIds, 0, 3) as $documentId) {
+            if (!is_numeric($documentId) || (int) $documentId < 1) {
+                continue;
+            }
+            $document = $this->DocumentArchiveModel->find((int) $documentId, (int) $centerId);
+            if ($document) {
+                $documents[] = [
+                    'id' => (int) $document['id'],
+                    'original_name' => (string) $document['original_name']
+                ];
+            }
+        }
+        return $documents;
+    }
+
+    private function validate_upload(&$upload)
+    {
+        if (
+            !is_array($upload)
+            || !isset($upload['error'])
+            || is_array($upload['error'])
+            || !is_numeric($upload['error'])
+            || !isset($upload['tmp_name'])
+            || !is_string($upload['tmp_name'])
+            || !isset($upload['size'])
+            || !is_numeric($upload['size'])
+            || !isset($upload['name'])
+            || !is_string($upload['name'])
+        ) {
+            return 'Choose a document image or PDF to archive.';
+        }
+        if ((int) $upload['error'] !== UPLOAD_ERR_OK) {
+            return $upload['error'] === UPLOAD_ERR_NO_FILE
+                ? 'Choose a document image or PDF to archive.'
+                : 'The upload did not complete. Try a file smaller than 10 MB.';
+        }
+        if (!is_uploaded_file($upload['tmp_name']) || (int) $upload['size'] < 1) {
+            return 'The uploaded file could not be verified.';
+        }
+        if ((int) $upload['size'] > 10 * 1024 * 1024) {
+            return 'Choose a file smaller than 10 MB.';
+        }
+
+        $fileInfo = new finfo(FILEINFO_MIME_TYPE);
+        $mimeType = $fileInfo->file($upload['tmp_name']);
+        $allowedTypes = [
+            'application/pdf',
+            'image/jpeg',
+            'image/png',
+            'image/webp',
+            'image/bmp',
+            'image/tiff'
+        ];
+        if (!in_array($mimeType, $allowedTypes, true)) {
+            return 'Use a PDF, JPEG, PNG, WebP, BMP, or TIFF file.';
+        }
+        if ($mimeType !== 'application/pdf') {
+            $dimensions = getimagesize($upload['tmp_name']);
+            if ($dimensions === false || $dimensions[0] * $dimensions[1] > 40_000_000) {
+                return 'The image is invalid or exceeds the 40-megapixel limit.';
+            }
+        }
+
+        $upload['mime_type'] = $mimeType;
+        return null;
+    }
+
+    private function extension_for_mime($mimeType)
+    {
+        $extensions = [
+            'application/pdf' => '.pdf',
+            'image/jpeg' => '.jpg',
+            'image/png' => '.png',
+            'image/webp' => '.webp',
+            'image/bmp' => '.bmp',
+            'image/tiff' => '.tif'
+        ];
+        return $extensions[$mimeType];
+    }
+
+    private function safe_original_name($name)
+    {
+        $name = preg_replace('/[\x00-\x1F\x7F]/', '', basename((string) $name));
+        $name = mb_substr($name, 0, 255, 'UTF-8');
+        return $name !== '' ? $name : 'document';
+    }
+
+    private function require_archive_access()
+    {
+        $userId = (int) $this->session->userdata('user_id');
+        $user = $this->db->raw(
+            'SELECT u.role, tc.center_code, tc.is_active AS center_is_active
+             FROM users u
+             LEFT JOIN training_centers tc ON tc.id = u.training_center_id
+             WHERE u.id = ? AND u.is_active = 1
+             LIMIT 1',
+            [$userId]
+        )->fetch(PDO::FETCH_ASSOC);
+
+        if (
+            !$user
+            || !(
+                $user['role'] === 'admin'
+                || (
+                    $user['role'] === 'center_admin'
+                    && $user['center_code'] === 'TESDA-MAIN'
+                    && (int) $user['center_is_active'] === 1
+                )
+            )
+        ) {
+            show_error('403 Forbidden', 'Only TESDA administrators and main-office staff can access the document archive.', 'error_general', 403);
+            exit;
+        }
+    }
+
+    private function csrf_token()
+    {
+        $token = $this->session->userdata('document_archive_token');
+        if (!is_string($token) || !preg_match('/^[a-f0-9]{64}$/', $token)) {
+            try {
+                $token = bin2hex(random_bytes(32));
+            } catch (Exception $error) {
+                throw new RuntimeException('A secure document form could not be initialized.', 0, $error);
+            }
+            $this->session->set_userdata('document_archive_token', $token);
+        }
+        return $token;
+    }
+}
