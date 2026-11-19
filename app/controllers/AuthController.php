@@ -1,7 +1,9 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-class AuthController extends Controller
+require_once APP_DIR . 'libraries/SpaController.php';
+
+class AuthController extends SpaController
 {
     public function __construct()
     {
@@ -11,97 +13,90 @@ class AuthController extends Controller
         $this->call->model('CenterApplicationModel');
     }
 
+    public function session_info()
+    {
+        $this->json(['user' => $this->session_user()]);
+    }
+
     public function login()
     {
-        $data = [
-            'error' => '',
-            'identity' => ''
-        ];
+        $input = $this->input();
+        $identity = $this->str($input, 'email') ?: $this->str($input, 'username');
+        $password = (string) ($input['password'] ?? '');
+        $user = $identity !== '' ? $this->UserModel->find_by_identity($identity) : null;
 
-        if ($this->form_validation->submitted()) {
-            $identity = trim($this->io->post('email') ?: $this->io->post('username'));
-            $password = $this->io->post('password');
-            $user = $this->UserModel->find_by_identity($identity);
-            $data['identity'] = $identity;
-
-            if (!empty($user) && ($user['is_active'] ?? 1) && password_verify($password, $user['password'])) {
-                $center = !empty($user['training_center_id'])
-                    ? $this->db->raw(
-                        'SELECT name FROM training_centers WHERE id = ?',
-                        [(int) $user['training_center_id']]
-                    )->fetch(PDO::FETCH_ASSOC)
-                    : null;
-                $this->session->regenerate_on_login();
-                $this->session->set_userdata([
-                    'id' => $user['id'],
-                    'user_id' => $user['id'],
-                    'username' => $user['username'],
-                    'full_name' => $user['full_name'] ?? $user['username'],
-                    'user_role' => $user['role'],
-                    'training_center_id' => $user['training_center_id'] ?? null,
-                    'training_center_name' => $center['name'] ?? ''
-                ]);
-                header('Location: ' . site_url('/dashboard'));
-                exit;
-            }
-
-            if (!empty($user) && password_verify($password, $user['password']) && !($user['is_active'] ?? 1)) {
-                $applicationStatus = $this->CenterApplicationModel->status_for_user((int) $user['id']);
-                $data['error'] = $applicationStatus === 'pending'
-                    ? 'Your application is awaiting review by your selected training center.'
-                    : ($applicationStatus === 'rejected'
-                        ? 'Your application was not approved. Contact your selected training center for details.'
-                        : 'This account is inactive. Contact your training center administrator.');
-            } else {
-                $data['error'] = 'The email or password is incorrect.';
-            }
+        if (!empty($user) && ($user['is_active'] ?? 1) && password_verify($password, $user['password'])) {
+            $center = !empty($user['training_center_id'])
+                ? $this->db->raw(
+                    'SELECT name FROM training_centers WHERE id = ?',
+                    [(int) $user['training_center_id']]
+                )->fetch(PDO::FETCH_ASSOC)
+                : null;
+            $this->session->regenerate_on_login();
+            $this->session->set_userdata([
+                'id' => $user['id'],
+                'user_id' => $user['id'],
+                'username' => $user['username'],
+                'full_name' => $user['full_name'] ?? $user['username'],
+                'user_role' => $user['role'],
+                'training_center_id' => $user['training_center_id'] ?? null,
+                'training_center_name' => $center['name'] ?? ''
+            ]);
+            $this->json(['user' => $this->session_user()]);
         }
 
-        $this->call->view('auth/login/index', $data);
+        if (!empty($user) && password_verify($password, $user['password']) && !($user['is_active'] ?? 1)) {
+            $applicationStatus = $this->CenterApplicationModel->status_for_user((int) $user['id']);
+            $message = $applicationStatus === 'pending'
+                ? 'Your application is awaiting review by your selected training center.'
+                : ($applicationStatus === 'rejected'
+                    ? 'Your application was not approved. Contact your selected training center for details.'
+                    : 'This account is inactive. Contact your training center administrator.');
+            $this->json_error($message, 403);
+        }
+
+        $this->json_error('The email or password is incorrect.', 401);
+    }
+
+    public function centers()
+    {
+        $this->json(['centers' => $this->TrainingCenterModel->all_active()]);
     }
 
     public function apply()
     {
-        $data = [
-            'centers' => $this->TrainingCenterModel->all_active(),
-            'errors' => [],
-            'application' => [],
-            'submitted' => false
+        $input = $this->input();
+        $application = [
+            'full_name' => $this->str($input, 'full_name'),
+            'username' => $this->str($input, 'username'),
+            'email' => strtolower($this->str($input, 'email')),
+            'password' => (string) ($input['password'] ?? ''),
+            'role' => $this->str($input, 'role'),
+            'training_center_id' => (int) ($input['training_center_id'] ?? 0)
         ];
 
-        if ($this->form_validation->submitted()) {
-            $application = [
-                'full_name' => trim((string) $this->io->post('full_name')),
-                'username' => trim((string) $this->io->post('username')),
-                'email' => strtolower(trim((string) $this->io->post('email'))),
-                'password' => (string) $this->io->post('password'),
-                'role' => trim((string) $this->io->post('role')),
-                'training_center_id' => (int) $this->io->post('training_center_id')
-            ];
-            $data['application'] = $application;
-            $data['errors'] = $this->validate_application($application);
-
-            if (!$data['errors']) {
-                $this->CenterApplicationModel->submit(
-                    $application['username'],
-                    $application['email'],
-                    $application['password'],
-                    $application['role'],
-                    $application['full_name'],
-                    $application['training_center_id']
-                );
-                foreach ($data['centers'] as $center) {
-                    if ((int) $center['id'] === $application['training_center_id']) {
-                        $data['submitted_center_name'] = $center['name'];
-                        break;
-                    }
-                }
-                $data['submitted'] = true;
-                $data['application'] = [];
-            }
+        $errors = $this->validate_application($application);
+        if ($errors) {
+            $this->json_errors($errors);
         }
 
-        $this->call->view('auth/apply/index', $data);
+        $this->CenterApplicationModel->submit(
+            $application['username'],
+            $application['email'],
+            $application['password'],
+            $application['role'],
+            $application['full_name'],
+            $application['training_center_id']
+        );
+
+        $centerName = '';
+        foreach ($this->TrainingCenterModel->all_active() as $center) {
+            if ((int) $center['id'] === $application['training_center_id']) {
+                $centerName = $center['name'];
+                break;
+            }
+        }
+        $this->json(['message' => 'Application submitted.', 'center_name' => $centerName], 201);
     }
 
     private function validate_application($application)
@@ -142,8 +137,6 @@ class AuthController extends Controller
     public function logout()
     {
         $this->session->sess_destroy();
-        header('Location: ' . site_url('/login'));
-        exit;
+        $this->json(['message' => 'Logged out.']);
     }
-
 }

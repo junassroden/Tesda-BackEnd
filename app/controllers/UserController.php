@@ -1,134 +1,115 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-/**
- * Controller: UserController
- * 
- * Automatically generated via CLI.
- */
-class UserController extends Controller
+require_once APP_DIR . 'libraries/SpaController.php';
+
+class UserController extends SpaController
 {
-   public function __construct() {
+    public function __construct()
+    {
         parent::__construct();
+        $this->require_role(['admin', 'center_admin'], 'Training center management access is required.');
         $this->call->model('UserModel');
         $this->call->model('TrainingCenterModel');
         $this->call->model('CenterApplicationModel');
-   }
-
-   public function showUsers() {
-        $centerId = $this->is_center_admin()
-            ? (int) $this->session->userdata('training_center_id')
-            : null;
-        $data['users'] = $this->UserModel->all($centerId);
-        $data['notification'] = $this->session->flashdata('notification');
-        $data['current_user_id'] = (int) $this->session->userdata('id');
-        $data['is_center_admin'] = $this->is_center_admin();
-        $data['can_access_document_archive'] = $this->can_access_document_archive();
-        $this->call->view('users/index', $data);
     }
 
-   public function create() {
-        $data = [
-            'errors' => [],
-            'account' => [],
-            'training_centers' => $this->form_centers(),
-            'is_center_admin' => $this->is_center_admin(),
-            'can_access_document_archive' => $this->can_access_document_archive()
-        ];
-        if ($this->form_validation->submitted()) {
-            $account = $this->account_input();
-            $account = $this->apply_center_scope($account);
-            $data['account'] = $account;
-            $data['errors'] = $this->validate_account($account, null, true);
-            if (!$data['errors']) {
-                $this->UserModel->create_account(
-                    $account['username'],
-                    $account['email'],
-                    $account['password'],
-                    $account['role'],
-                    $account['full_name'],
-                    $account['is_active'],
-                    $account['training_center_id']
-                );
-                $this->session->set_flashdata('notification', 'Account created successfully.');
-                header('Location: ' . site_url('/show-users'));
-                exit;
-            }
-        }
-        $data['page_title'] = 'Create account';
-        $data['form_action'] = site_url('/admin/users/create');
-        $this->call->view('users/form', $data);
-   }
+    public function index()
+    {
+        $this->json([
+            'users' => $this->UserModel->all($this->is_center_admin() ? $this->center_id() : null),
+            'current_user_id' => $this->user_id()
+        ]);
+    }
 
-   public function edit($id) {
+    public function form_options()
+    {
+        $this->json(['training_centers' => $this->form_centers()]);
+    }
+
+    public function show($id)
+    {
+        $user = $this->manageable_user($id);
+        unset($user['password']);
+        $this->json(['account' => $user]);
+    }
+
+    public function create()
+    {
+        $account = $this->apply_center_scope($this->account_input());
+        $errors = $this->validate_account($account, null, true);
+        if ($errors) {
+            $this->json_errors($errors);
+        }
+        $this->UserModel->create_account(
+            $account['username'],
+            $account['email'],
+            $account['password'],
+            $account['role'],
+            $account['full_name'],
+            $account['is_active'],
+            $account['training_center_id']
+        );
+        $this->json(['message' => 'Account created successfully.'], 201);
+    }
+
+    public function update($id)
+    {
+        $this->manageable_user($id);
+        $account = $this->apply_center_scope($this->account_input());
+        $errors = $this->validate_account($account, (int) $id, false);
+        if ($errors) {
+            $this->json_errors($errors);
+        }
+        $this->UserModel->update_account(
+            (int) $id,
+            $account['username'],
+            $account['email'],
+            $account['role'],
+            $account['full_name'],
+            $account['is_active'],
+            $account['training_center_id'],
+            $account['password']
+        );
+        $this->json(['message' => 'Account updated successfully.']);
+    }
+
+    public function delete($id)
+    {
+        $this->manageable_user($id);
+        if ((int) $id === $this->user_id()) {
+            $this->json_error('You cannot delete the account you are using.', 409);
+        }
+        $this->UserModel->delete_account((int) $id);
+        $this->json(['message' => 'Account deleted successfully.']);
+    }
+
+    private function manageable_user($id)
+    {
         $user = $this->UserModel->find((int) $id);
         if (!$user || !$this->can_manage_user($user)) {
-            show_404();
-            return;
+            $this->json_error('Account not found.', 404);
         }
+        return $user;
+    }
 
-        $data = [
-            'errors' => [],
-            'account' => $user,
-            'training_centers' => $this->form_centers(),
-            'is_center_admin' => $this->is_center_admin(),
-            'can_access_document_archive' => $this->can_access_document_archive()
-        ];
-        if ($this->form_validation->submitted()) {
-            $account = $this->account_input();
-            $account = $this->apply_center_scope($account);
-            $data['account'] = array_merge($user, $account);
-            $data['errors'] = $this->validate_account($account, (int) $id, false);
-            if (!$data['errors']) {
-                $this->UserModel->update_account(
-                    (int) $id,
-                    $account['username'],
-                    $account['email'],
-                    $account['role'],
-                    $account['full_name'],
-                    $account['is_active'],
-                    $account['training_center_id'],
-                    $account['password']
-                );
-                $this->session->set_flashdata('notification', 'Account updated successfully.');
-                header('Location: ' . site_url('/show-users'));
-                exit;
-            }
-        }
-        $data['page_title'] = 'Edit account';
-        $data['form_action'] = site_url('/admin/users/edit/' . (int) $id);
-        $this->call->view('users/form', $data);
-   }
-
-   public function delete($id) {
-        $user = $this->UserModel->find((int) $id);
-        if (!$user || !$this->can_manage_user($user)) {
-            show_404();
-            return;
-        }
-        if ((int) $id === (int) $this->session->userdata('id')) {
-            $this->session->set_flashdata('notification', 'You cannot delete the account you are using.');
-        } else {
-            $this->UserModel->delete_account((int) $id);
-            $this->session->set_flashdata('notification', 'Account deleted successfully.');
-        }
-        header('Location: ' . site_url('/show-users'));
-        exit;
-   }
-
-   private function account_input() {
+    private function account_input()
+    {
+        $input = $this->input();
+        $active = $input['is_active'] ?? '1';
         return [
-            'username' => trim((string) $this->io->post('username')),
-            'email' => trim((string) $this->io->post('email')),
-            'full_name' => trim((string) $this->io->post('full_name')),
-            'role' => trim((string) $this->io->post('role')),
-            'password' => (string) $this->io->post('password'),
-            'is_active' => $this->io->post('is_active') === '1' ? 1 : 0,
-            'training_center_id' => (int) $this->io->post('training_center_id') ?: null
+            'username' => $this->str($input, 'username'),
+            'email' => $this->str($input, 'email'),
+            'full_name' => $this->str($input, 'full_name'),
+            'role' => $this->str($input, 'role'),
+            'password' => (string) ($input['password'] ?? ''),
+            'is_active' => ($active === '1' || $active === 1 || $active === true) ? 1 : 0,
+            'training_center_id' => (int) ($input['training_center_id'] ?? 0) ?: null
         ];
-   }
+    }
 
-   private function validate_account($account, $excludeId, $passwordRequired) {
+    private function validate_account($account, $excludeId, $passwordRequired)
+    {
         $errors = [];
         if (!preg_match('/^[A-Za-z0-9_.-]{3,100}$/', $account['username'])) {
             $errors[] = 'Username must be 3 to 100 characters and use letters, numbers, dots, underscores, or hyphens.';
@@ -173,40 +154,27 @@ class UserController extends Controller
             $errors[] = 'That email address or username is already in use.';
         }
         return $errors;
-   }
+    }
 
-   private function is_center_admin() {
-        return $this->session->userdata('user_role') === 'center_admin';
-   }
-
-   private function can_access_document_archive()
-   {
-       if (!$this->is_center_admin()) {
-           return false;
-       }
-       return $this->TrainingCenterModel->is_main_office(
-           (int) $this->session->userdata('training_center_id')
-       );
-   }
-
-   private function form_centers() {
+    private function form_centers()
+    {
         if (!$this->is_center_admin()) {
             return $this->TrainingCenterModel->all_active();
         }
-        $center = $this->TrainingCenterModel->find_active(
-            (int) $this->session->userdata('training_center_id')
-        );
+        $center = $this->TrainingCenterModel->find_active($this->center_id());
         return $center ? [$center] : [];
-   }
+    }
 
-   private function apply_center_scope($account) {
+    private function apply_center_scope($account)
+    {
         if ($this->is_center_admin()) {
-            $account['training_center_id'] = (int) $this->session->userdata('training_center_id');
+            $account['training_center_id'] = $this->center_id();
         }
         return $account;
-   }
+    }
 
-   private function can_manage_user($user) {
+    private function can_manage_user($user)
+    {
         if (in_array(
             $this->CenterApplicationModel->status_for_user((int) $user['id']),
             ['pending', 'rejected'],
@@ -217,7 +185,7 @@ class UserController extends Controller
         if (!$this->is_center_admin()) {
             return true;
         }
-        return (int) ($user['training_center_id'] ?? 0) === (int) $this->session->userdata('training_center_id')
+        return (int) ($user['training_center_id'] ?? 0) === $this->center_id()
             && in_array($user['role'] ?? '', ['student', 'instructor'], true);
-   }
+    }
 }

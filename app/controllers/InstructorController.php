@@ -1,11 +1,17 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-class InstructorController extends Controller
+require_once APP_DIR . 'libraries/SpaController.php';
+
+class InstructorController extends SpaController
 {
     public function __construct()
     {
         parent::__construct();
+        $this->require_role('instructor', 'Instructor access is required.');
+        if ($this->center_id() < 1) {
+            $this->json_error('Ask an administrator to assign your account to a training center.', 403);
+        }
         $this->call->model('UserModel');
         $this->call->model('CourseModel');
         $this->call->model('EnrollmentModel');
@@ -13,68 +19,38 @@ class InstructorController extends Controller
 
     public function index()
     {
-        $this->require_role('instructor');
-        $trainingCenterId = (int) $this->session->userdata('training_center_id');
-        if ($trainingCenterId < 1) {
-            show_error('Training center required', 'Ask an administrator to assign your account to a training center.', 'error_general', 403);
-            return;
-        }
-        $this->call->view('instructor/home', [
-            'username' => $this->session->userdata('username'),
-            'full_name' => $this->session->userdata('full_name'),
-            'training_center_name' => $this->session->userdata('training_center_name'),
-            'students' => $this->UserModel->students($trainingCenterId),
-            'courses' => $this->CourseModel->open($trainingCenterId),
-            'enrollments' => $this->EnrollmentModel->for_instructor(
-                (int) $this->session->userdata('id'),
-                $trainingCenterId
-            ),
-            'notification' => $this->session->flashdata('notification'),
-            'notification_success' => $this->session->flashdata('notification_success') === '1'
+        $centerId = $this->center_id();
+        $this->json([
+            'students' => $this->UserModel->students($centerId),
+            'courses' => $this->CourseModel->open($centerId),
+            'enrollments' => $this->EnrollmentModel->for_instructor($this->user_id(), $centerId)
         ]);
     }
 
     public function enroll()
     {
-        $this->require_role('instructor');
-        $studentId = (int) $this->io->post('student_id');
-        $courseId = (int) $this->io->post('course_id');
+        $input = $this->input();
+        $studentId = (int) ($input['student_id'] ?? 0);
+        $courseId = (int) ($input['course_id'] ?? 0);
         $student = $this->UserModel->find($studentId);
         $course = $this->CourseModel->find($courseId);
-        $success = false;
-        $trainingCenterId = (int) $this->session->userdata('training_center_id');
+        $centerId = $this->center_id();
 
         if (!$student || $student['role'] !== 'student' || (int) $student['is_active'] !== 1
-            || (int) $student['training_center_id'] !== $trainingCenterId) {
-            $message = 'Select an active student account.';
-        } elseif (!$course || $course['status'] !== 'open'
-            || (int) $course['training_center_id'] !== $trainingCenterId) {
-            $message = 'Select an open course.';
-        } elseif ($this->EnrollmentModel->exists($studentId, $courseId)) {
-            $message = 'This student is already enrolled in that course.';
-        } elseif ($this->EnrollmentModel->course_enrollment_count($courseId) >= (int) $course['capacity']) {
-            $message = 'This course has reached its enrollment capacity.';
-        } else {
-            $this->EnrollmentModel->add(
-                $studentId,
-                $courseId,
-                (int) $this->session->userdata('id')
-            );
-            $message = 'Student enrolled successfully.';
-            $success = true;
+            || (int) $student['training_center_id'] !== $centerId) {
+            $this->json_error('Select an active student account.', 422);
+        }
+        if (!$course || $course['status'] !== 'open' || (int) $course['training_center_id'] !== $centerId) {
+            $this->json_error('Select an open course.', 422);
+        }
+        if ($this->EnrollmentModel->exists($studentId, $courseId)) {
+            $this->json_error('This student is already enrolled in that course.', 409);
+        }
+        if ($this->EnrollmentModel->course_enrollment_count($courseId) >= (int) $course['capacity']) {
+            $this->json_error('This course has reached its enrollment capacity.', 409);
         }
 
-        $this->session->set_flashdata('notification', $message);
-        $this->session->set_flashdata('notification_success', $success ? '1' : '0');
-        header('Location: ' . site_url('/instructor'));
-        exit;
-    }
-
-    private function require_role($role)
-    {
-        if ($this->session->userdata('user_role') !== $role) {
-            show_error('403 Forbidden', 'This page is not available for your account role.', 'error_general', 403);
-            exit;
-        }
+        $this->EnrollmentModel->add($studentId, $courseId, $this->user_id());
+        $this->json(['message' => 'Student enrolled successfully.'], 201);
     }
 }

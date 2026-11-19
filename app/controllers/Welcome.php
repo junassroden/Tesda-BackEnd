@@ -1,64 +1,62 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-class Welcome extends Controller {
-	public function index() {
-		$this->call->view('landing/index');
+require_once APP_DIR . 'libraries/SpaController.php';
+
+class Welcome extends SpaController
+{
+	public function index()
+	{
+		$this->json(['app' => 'TESDA NEXUS API', 'status' => 'ok']);
 	}
 
-	public function dashboard() {
-		$role = $this->session->userdata('user_role');
-		$data = [
-			'username' => $this->session->userdata('username'),
-			'full_name' => $this->session->userdata('full_name'),
-			'training_center_name' => $this->session->userdata('training_center_name'),
-			'user_role' => $role
-		];
+	public function dashboard()
+	{
+		$this->require_login();
+		$role = $this->role();
 
 		if ($role === 'admin') {
 			$this->call->model('CourseModel');
 			$this->call->model('EnrollmentModel');
 			$this->call->model('UserModel');
 			$this->call->model('ProductModel');
-			$data['analytics'] = [
-				'students' => $this->UserModel->count_by_role('student'),
-				'instructors' => $this->UserModel->count_by_role('instructor'),
-				'courses' => $this->CourseModel->count(),
-				'enrollments' => $this->EnrollmentModel->count(),
-				'products' => count($this->ProductModel->read())
-			];
-			$this->call->view('dashboard/admin', $data);
-			return;
+			$this->json([
+				'role' => $role,
+				'analytics' => [
+					'students' => (int) $this->UserModel->count_by_role('student'),
+					'instructors' => (int) $this->UserModel->count_by_role('instructor'),
+					'courses' => (int) $this->CourseModel->count(),
+					'enrollments' => (int) $this->EnrollmentModel->count(),
+					'products' => count($this->ProductModel->read())
+				]
+			]);
 		}
 
 		if ($role === 'center_admin') {
-			$centerId = (int) $this->session->userdata('training_center_id');
-			$this->call->model('TrainingCenterModel');
+			$centerId = $this->center_id();
 			$this->call->model('CourseModel');
 			$this->call->model('UserModel');
 			$this->call->model('CenterApplicationModel');
-			$data['center_name'] = $this->session->userdata('training_center_name');
-			$data['can_access_document_archive'] = $this->TrainingCenterModel->is_main_office($centerId);
-			$data['analytics'] = [
-				'students' => $this->UserModel->count_by_role('student', $centerId),
-				'instructors' => $this->UserModel->count_by_role('instructor', $centerId),
-				'courses' => $this->CourseModel->count($centerId),
-				'applications' => $this->CenterApplicationModel->pending_count($centerId)
-			];
-			$this->call->view('dashboard/center_admin', $data);
-			return;
+			$this->json([
+				'role' => $role,
+				'center_name' => (string) $this->session->userdata('training_center_name'),
+				'analytics' => [
+					'students' => (int) $this->UserModel->count_by_role('student', $centerId),
+					'instructors' => (int) $this->UserModel->count_by_role('instructor', $centerId),
+					'courses' => (int) $this->CourseModel->count($centerId),
+					'applications' => (int) $this->CenterApplicationModel->pending_count($centerId)
+				]
+			]);
 		}
 
 		if ($role === 'instructor') {
-			header('Location: ' . site_url('/instructor'));
-			exit;
+			$this->json(['role' => $role, 'redirect' => '/instructor']);
 		}
 
 		$this->call->model('EnrollmentModel');
-		$data['enrollments'] = $this->EnrollmentModel->for_student(
-			(int) $this->session->userdata('id')
-		);
-		$this->call->view('student/home', $data);
+		$this->json([
+			'role' => $role,
+			'enrollments' => $this->EnrollmentModel->for_student($this->user_id())
+		]);
 	}
 }
-?>

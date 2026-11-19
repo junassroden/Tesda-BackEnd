@@ -2,8 +2,9 @@
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
 require_once APP_DIR . 'libraries/DocumentAIService.php';
+require_once APP_DIR . 'libraries/SpaController.php';
 
-class DocumentArchiveController extends Controller
+class DocumentArchiveController extends SpaController
 {
     private $documentAI;
     private $archiveDirectory;
@@ -11,6 +12,7 @@ class DocumentArchiveController extends Controller
     public function __construct()
     {
         parent::__construct();
+        $this->require_archive_access();
         $this->call->model('DocumentArchiveModel');
         $this->documentAI = new DocumentAIService();
         $this->archiveDirectory = ROOT_DIR . 'runtime' . DIRECTORY_SEPARATOR . 'document-archive';
@@ -18,85 +20,79 @@ class DocumentArchiveController extends Controller
 
     public function index()
     {
-        $this->require_archive_access();
+        $centerId = $this->archive_center_id();
+        $this->json([
+            'documents' => $this->DocumentArchiveModel->recent($centerId),
+            'total_documents' => (int) $this->DocumentArchiveModel->count($centerId)
+        ]);
+    }
+
+    public function upload()
+    {
+        $centerId = $this->archive_center_id();
+        $upload = $_FILES['document_file'] ?? null;
+        $validationError = $this->validate_upload($upload);
+        if ($validationError !== null) {
+            $this->json_error($validationError, 422);
+        }
+        $this->process_upload($upload, $centerId);
+    }
+
+    public function chat_history()
+    {
+        $this->json(['messages' => $this->chat_messages()]);
+    }
+
+    public function chat()
+    {
+        $centerId = $this->archive_center_id();
+        $input = $this->input();
+        $question = $this->str($input, 'question');
+        if ($question === '' || mb_strlen($question, 'UTF-8') > 240) {
+            $this->json_error(
+                $question === '' ? 'Enter a message so I know what to look for.' : 'Keep your message under 240 characters.',
+                422
+            );
+        }
+
+        $messages = $this->chat_messages();
+        $messages[] = ['role' => 'user', 'text' => $question, 'documents' => []];
+        $response = $this->respond_to_chat($question, $centerId);
+        $messages[] = ['role' => 'assistant', 'text' => $response['text'], 'documents' => $response['documents']];
+        $messages = array_slice($messages, -20);
+        $this->session->set_userdata('document_chat_history', $messages);
+        $this->json(['messages' => $messages]);
+    }
+
+    public function clear_chat()
+    {
+        $this->session->unset_userdata(['document_chat_history', 'document_chat_document_ids']);
+        $this->json(['messages' => [], 'message' => 'Chat history cleared.']);
+    }
+
+    private function chat_messages()
+    {
+        $messages = $this->session->userdata('document_chat_history');
+        return is_array($messages) ? array_values($messages) : [];
+    }
+
+    private function archive_center_id()
+    {
         $center = $this->DocumentArchiveModel->central_office();
         if (!$center) {
-            show_error(
-                'Document archive unavailable',
-                'The TESDA main office record is missing or inactive. Run the document archive SQL setup.',
-                'error_general',
-                500
-            );
-            return;
+            $this->json_error('The TESDA main office record is missing or inactive. Run the document archive SQL setup.', 500);
         }
-
-        $centerId = (int) $center['id'];
-        $question = $_POST['question'] ?? '';
-        $csrfToken = $this->csrf_token();
-        $chatMessages = $this->session->userdata('document_chat_history');
-        $data = [
-            'documents' => [],
-            'question' => is_string($question) ? trim($question) : '',
-            'csrf_token' => $csrfToken,
-            'chat_messages' => is_array($chatMessages) ? $chatMessages : [],
-            'chat_open' => $this->session->flashdata('document_chat_open'),
-            'chat_notice' => $this->session->flashdata('document_chat_notice'),
-            'chat_error' => '',
-            'error' => '',
-            'success' => $this->session->flashdata('document_archive_success'),
-            'total_documents' => $this->DocumentArchiveModel->count($centerId),
-            'username' => $this->session->userdata('username'),
-            'user_role' => $this->session->userdata('user_role'),
-            'active_page' => 'document-archive'
-        ];
-
-        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
-            $submittedToken = $_POST['archive_token'] ?? '';
-            if (!is_string($submittedToken) || !hash_equals($csrfToken, $submittedToken)) {
-                if (array_key_exists('question', $_POST)) {
-                    $data['chat_error'] = 'Your form session expired. Reload the page and try again.';
-                    $data['chat_open'] = true;
-                } else {
-                    $data['error'] = 'Your form session expired. Reload the page and try again.';
-                }
-            } elseif (array_key_exists('document_file', $_FILES)) {
-                $upload = $_FILES['document_file'];
-                $validationError = $this->validate_upload($upload);
-                if ($validationError !== null) {
-                    $data['error'] = $validationError;
-                } else {
-                    $this->process_upload($upload, $centerId, $data);
-                }
-            } elseif (array_key_exists('clear_chat', $_POST)) {
-                $this->session->unset_userdata([
-                    'document_chat_history',
-                    'document_chat_document_ids'
-                ]);
-                $this->session->set_flashdata('document_chat_notice', 'Chat history cleared.');
-                $this->session->set_flashdata('document_chat_open', true);
-                header('Location: ' . site_url('/documents#archive-chat'));
-                exit;
-            } elseif (array_key_exists('question', $_POST)) {
-                $this->process_chat($data, $centerId);
-            } else {
-                $data['error'] = 'Choose a document image to archive or enter a search question.';
-            }
-        }
-
-        $data['documents'] = $this->DocumentArchiveModel->recent($centerId);
-        $this->call->view('documents/archive', $data);
+        return (int) $center['id'];
     }
 
     public function download($id)
     {
-        $this->require_archive_access();
         $center = $this->DocumentArchiveModel->central_office();
         $document = $center
             ? $this->DocumentArchiveModel->find((int) $id, (int) $center['id'])
             : null;
         if (!$document) {
-            show_404();
-            return;
+            $this->json_error('Document not found.', 404);
         }
 
         $path = $this->archiveDirectory . DIRECTORY_SEPARATOR . $document['storage_key'];
@@ -109,8 +105,7 @@ class DocumentArchiveController extends Controller
             || !is_file($realPath)
         ) {
             error_log('Document archive file is missing or outside its storage directory: ' . (int) $id);
-            show_404();
-            return;
+            $this->json_error('Document not found.', 404);
         }
 
         $file = new finfo(FILEINFO_MIME_TYPE);
@@ -125,9 +120,8 @@ class DocumentArchiveController extends Controller
         exit;
     }
 
-    private function process_upload($upload, $centerId, &$data)
+    private function process_upload($upload, $centerId)
     {
-        $data['question'] = '';
         try {
             if ($upload['mime_type'] === 'application/pdf') {
                 set_time_limit(0);
@@ -172,47 +166,14 @@ class DocumentArchiveController extends Controller
             }
 
             $pagesAnalyzed = (int) ($analysis['pages_analyzed'] ?? 1);
-            $this->session->set_flashdata(
-                'document_archive_success',
-                'Document saved. OCR processed ' . $pagesAnalyzed
-                    . ($pagesAnalyzed === 1 ? ' page' : ' pages')
-                    . ' and extracted ' . str_word_count($analysis['ocr']['text'] ?? '') . ' words.'
-            );
-            header('Location: ' . site_url('/documents'));
-            exit;
+            $message = 'Document saved. OCR processed ' . $pagesAnalyzed
+                . ($pagesAnalyzed === 1 ? ' page' : ' pages')
+                . ' and extracted ' . str_word_count($analysis['ocr']['text'] ?? '') . ' words.';
         } catch (RuntimeException $error) {
-            $data['error'] = $error->getMessage();
             error_log('Document archive upload failed: ' . $error->getMessage());
+            $this->json_error($error->getMessage(), 500);
         }
-    }
-
-    private function process_chat(&$data, $centerId)
-    {
-        $question = $data['question'];
-        if ($question === '' || mb_strlen($question, 'UTF-8') > 240) {
-            $data['chat_error'] = $question === ''
-                ? 'Enter a message so I know what to look for.'
-                : 'Keep your message under 240 characters.';
-            $data['chat_open'] = true;
-            return;
-        }
-
-        $messages = $data['chat_messages'];
-        $messages[] = [
-            'role' => 'user',
-            'text' => $question,
-            'documents' => []
-        ];
-        $response = $this->respond_to_chat($question, $centerId);
-        $messages[] = [
-            'role' => 'assistant',
-            'text' => $response['text'],
-            'documents' => $response['documents']
-        ];
-        $this->session->set_userdata('document_chat_history', array_slice($messages, -20));
-        $this->session->set_flashdata('document_chat_open', true);
-        header('Location: ' . site_url('/documents#archive-chat'));
-        exit;
+        $this->json(['message' => $message], 201);
     }
 
     private function respond_to_chat($question, $centerId)
@@ -495,6 +456,7 @@ class DocumentArchiveController extends Controller
 
     private function require_archive_access()
     {
+        $this->require_login();
         $userId = (int) $this->session->userdata('user_id');
         $user = $this->db->raw(
             'SELECT u.role, tc.center_code, tc.is_active AS center_is_active
@@ -516,22 +478,7 @@ class DocumentArchiveController extends Controller
                 )
             )
         ) {
-            show_error('403 Forbidden', 'Only TESDA administrators and main-office staff can access the document archive.', 'error_general', 403);
-            exit;
+            $this->json_error('Only TESDA administrators and main-office staff can access the document archive.', 403);
         }
-    }
-
-    private function csrf_token()
-    {
-        $token = $this->session->userdata('document_archive_token');
-        if (!is_string($token) || !preg_match('/^[a-f0-9]{64}$/', $token)) {
-            try {
-                $token = bin2hex(random_bytes(32));
-            } catch (Exception $error) {
-                throw new RuntimeException('A secure document form could not be initialized.', 0, $error);
-            }
-            $this->session->set_userdata('document_archive_token', $token);
-        }
-        return $token;
     }
 }

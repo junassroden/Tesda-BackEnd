@@ -1,24 +1,21 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-class CenterApplicationController extends Controller
+require_once APP_DIR . 'libraries/SpaController.php';
+
+class CenterApplicationController extends SpaController
 {
     public function __construct()
     {
         parent::__construct();
+        $this->require_role('center_admin');
         $this->call->model('CenterApplicationModel');
-        $this->call->model('TrainingCenterModel');
     }
 
     public function index()
     {
-        $centerId = (int) $this->session->userdata('training_center_id');
-        $this->call->view('center_admin/applications', [
-            'applications' => $this->CenterApplicationModel->pending_for_center($centerId),
-            'center_name' => $this->session->userdata('training_center_name'),
-            'is_center_admin' => true,
-            'can_access_document_archive' => $this->TrainingCenterModel->is_main_office($centerId),
-            'notification' => $this->session->flashdata('notification')
+        $this->json([
+            'applications' => $this->CenterApplicationModel->pending_for_center($this->center_id())
         ]);
     }
 
@@ -36,17 +33,13 @@ class CenterApplicationController extends Controller
     {
         $reviewed = $this->CenterApplicationModel->review(
             (int) $id,
-            (int) $this->session->userdata('training_center_id'),
-            (int) $this->session->userdata('id'),
+            $this->center_id(),
+            $this->user_id(),
             $decision
         );
-        $this->session->set_flashdata(
-            'notification',
-            $reviewed
-                ? 'Application ' . $decision . '.'
-                : 'That application is no longer pending or does not belong to this center.'
-        );
-        header('Location: ' . site_url('/center/applications'));
-        exit;
+        if (!$reviewed) {
+            $this->json_error('That application is no longer pending or does not belong to this center.', 409);
+        }
+        $this->json(['message' => 'Application ' . $decision . '.']);
     }
 }

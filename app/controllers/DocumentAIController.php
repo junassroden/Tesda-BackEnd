@@ -2,94 +2,68 @@
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
 require_once APP_DIR . 'libraries/DocumentAIService.php';
+require_once APP_DIR . 'libraries/SpaController.php';
 
-class DocumentAIController extends Controller
+class DocumentAIController extends SpaController
 {
     private $documentAI;
 
     public function __construct()
     {
         parent::__construct();
+        $this->require_role('admin', 'Administrator access is required.');
         $this->documentAI = new DocumentAIService();
     }
 
-    public function index()
+    public function analyze()
     {
-        $data = $this->page_data();
-        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
-            $upload = $_FILES['document_file'] ?? null;
-            $validationError = $this->validate_upload($upload);
-            if ($validationError !== null) {
-                $data['error'] = $validationError;
-            } else {
-                $data['source_name'] = basename((string) $upload['name']);
-                try {
-                    $data['result'] = $this->documentAI->analyze_image($upload['tmp_name']);
-                } catch (RuntimeException $error) {
-                    $data['error'] = $error->getMessage();
-                    error_log('Document AI image analysis failed: ' . $error->getMessage());
-                }
-            }
+        $upload = $_FILES['document_file'] ?? null;
+        $validationError = $this->validate_upload($upload);
+        if ($validationError !== null) {
+            $this->json_error($validationError, 422);
         }
-        $this->render($data);
+        $this->run(basename((string) $upload['name']), function () use ($upload) {
+            return $this->documentAI->analyze_image($upload['tmp_name']);
+        });
     }
 
     public function sample()
     {
-        $data = $this->page_data();
-        $samplePath = ROOT_DIR . 'ai' . DIRECTORY_SEPARATOR . 'samples'
-            . DIRECTORY_SEPARATOR . 'invoice.png';
+        $samplePath = ROOT_DIR . 'ai' . DIRECTORY_SEPARATOR . 'samples' . DIRECTORY_SEPARATOR . 'invoice.png';
         if (!is_file($samplePath)) {
-            $data['error'] = 'The bundled sample invoice is missing.';
-        } else {
-            $data['source_name'] = 'Bundled RVL-CDIP invoice sample';
-            try {
-                $data['result'] = $this->documentAI->analyze_image($samplePath);
-            } catch (RuntimeException $error) {
-                $data['error'] = $error->getMessage();
-                error_log('Document AI sample analysis failed: ' . $error->getMessage());
-            }
+            $this->json_error('The bundled sample invoice is missing.', 500);
         }
-        $this->render($data);
+        $this->run('Bundled RVL-CDIP invoice sample', function () use ($samplePath) {
+            return $this->documentAI->analyze_image($samplePath);
+        });
     }
 
     public function classify_text()
     {
-        $data = $this->page_data();
-        $text = trim((string) ($_POST['ocr_text'] ?? ''));
-        $data['ocr_text'] = $text;
+        $text = $this->str($this->input(), 'ocr_text');
+        $this->run('', function () use ($text) {
+            return $this->documentAI->classify_text($text);
+        }, $text);
+    }
+
+    private function run($sourceName, $analysis, $ocrText = '')
+    {
         try {
-            $data['result'] = $this->documentAI->classify_text($text);
+            $result = $analysis();
         } catch (RuntimeException $error) {
-            $data['error'] = $error->getMessage();
-            error_log('Document AI text classification failed: ' . $error->getMessage());
+            error_log('Document AI analysis failed: ' . $error->getMessage());
+            $this->json_error($error->getMessage(), 500, ['ocr_text' => $ocrText]);
         }
-        $this->render($data);
-    }
-
-    private function page_data()
-    {
-        return [
-            'result' => null,
-            'error' => '',
-            'source_name' => '',
-            'ocr_text' => '',
-            'active_page' => 'document-ai'
-        ];
-    }
-
-    private function render($data)
-    {
-        $this->call->view('document_ai/index', $data);
+        $this->json(['result' => $result, 'source_name' => $sourceName, 'ocr_text' => $ocrText]);
     }
 
     private function validate_upload($upload)
     {
-        if (!is_array($upload) || !isset($upload['error'])) {
+        if (!is_array($upload) || !isset($upload['error']) || is_array($upload['error'])) {
             return 'Choose a document image to analyze.';
         }
         if ((int) $upload['error'] !== UPLOAD_ERR_OK) {
-            return $upload['error'] === UPLOAD_ERR_NO_FILE
+            return (int) $upload['error'] === UPLOAD_ERR_NO_FILE
                 ? 'Choose a document image to analyze.'
                 : 'The upload did not complete. Try a smaller image.';
         }

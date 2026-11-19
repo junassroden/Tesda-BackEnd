@@ -1,107 +1,89 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-/**
- * Controller: ProductController
- * 
- * Automatically generated via CLI.
- */
-class ProductController extends Controller
+require_once APP_DIR . 'libraries/SpaController.php';
+
+class ProductController extends SpaController
 {
     public function __construct()
     {
         parent::__construct();
+        $this->require_login();
         $this->call->model('ProductModel');
     }
 
-    public function read()
+    public function index()
     {
-        $data['products'] = $this->ProductModel->read();
-        $data['name'] = "LavaLust Framework";
-        $data['user_role'] = $this->session->userdata('user_role');
-        $data['notification'] = $this->session->flashdata('notification');
-        $this->call->view('products/index', $data);
+        $this->json(['products' => $this->ProductModel->read()]);
+    }
+
+    public function show($id)
+    {
+        $this->require_admin();
+        $product = $this->ProductModel->find((int) $id);
+        if (!$product) {
+            $this->json_error('Item not found.', 404);
+        }
+        $this->json(['product' => $product]);
     }
 
     public function create()
     {
         $this->require_admin();
-
-        if ($this->form_validation->submitted()) {
-            $this->validate_product();
-            if ($this->form_validation->run()) {
-                $product_name = $this->io->post('product_name');
-                $description = $this->io->post('description');
-                $price = $this->io->post('price');
-                $quantity = $this->io->post('quantity');
-                $this->ProductModel->create($product_name, $description, $price, $quantity);
-                $this->session->set_flashdata('notification', 'Product added successfully.');
-                header('Location: ' . site_url('/products'));
-                exit;
-            }
-        }
-
-        $data['errors'] = $this->form_validation->get_errors();
-        $this->call->view('products/create', $data);
+        $product = $this->product_input();
+        $this->ProductModel->create($product['product_name'], $product['description'], $product['price'], $product['quantity']);
+        $this->json(['message' => 'Product added successfully.'], 201);
     }
 
-    public function edit($id)
+    public function update($id)
     {
         $this->require_admin();
-        $product = $this->ProductModel->find((int) $id);
-
-        if (!$product) {
-            show_404();
-            return;
+        if (!$this->ProductModel->find((int) $id)) {
+            $this->json_error('Item not found.', 404);
         }
-
-        if ($this->form_validation->submitted()) {
-            $this->validate_product();
-
-            if ($this->form_validation->run()) {
-                $this->ProductModel->update(
-                    (int) $id,
-                    $this->io->post('product_name'),
-                    $this->io->post('description'),
-                    $this->io->post('price'),
-                    $this->io->post('quantity')
-                );
-
-                $this->session->set_flashdata('notification', 'Product updated successfully.');
-                header('Location: ' . site_url('/products'));
-                exit;
-            }
-        }
-
-        $data['product'] = $product;
-        $data['errors'] = $this->form_validation->get_errors();
-        $this->call->view('products/edit', $data);
+        $product = $this->product_input();
+        $this->ProductModel->update((int) $id, $product['product_name'], $product['description'], $product['price'], $product['quantity']);
+        $this->json(['message' => 'Product updated successfully.']);
     }
 
     public function delete($id)
     {
         $this->require_admin();
         $this->ProductModel->delete((int) $id);
-        $this->session->set_flashdata('notification', 'Product deleted successfully.');
-        header('Location: ' . site_url('/products'));
-        exit;
+        $this->json(['message' => 'Product deleted successfully.']);
     }
 
-    private function validate_product()
+    /** Same rules as the old form: required, alpha-numeric name, 255-char description, numeric price and quantity. */
+    private function product_input()
     {
-        $this->form_validation
-            ->name('product_name')->required()->alpha_numeric_space()
-            ->name('description')->required()->max_length(255)
-            ->name('price')->required()->numeric()
-            ->name('quantity')->required()->numeric();
+        $input = $this->input();
+        $product = [
+            'product_name' => $this->str($input, 'product_name'),
+            'description' => $this->str($input, 'description'),
+            'price' => $this->str($input, 'price'),
+            'quantity' => $this->str($input, 'quantity')
+        ];
+        $errors = [];
+        if ($product['product_name'] === '' || !preg_match('/^[a-z0-9 ]+$/i', $product['product_name'])) {
+            $errors[] = 'Item name is required and may contain only letters, numbers, and spaces.';
+        }
+        if ($product['description'] === '' || mb_strlen($product['description']) > 255) {
+            $errors[] = 'Description is required and must be at most 255 characters.';
+        }
+        if (!is_numeric($product['price'])) {
+            $errors[] = 'Price must be a number.';
+        }
+        if (!is_numeric($product['quantity'])) {
+            $errors[] = 'Quantity must be a number.';
+        }
+        if ($errors) {
+            $this->json_errors($errors);
+        }
+        return $product;
     }
 
     private function require_admin()
     {
-        if ($this->session->userdata('user_role') !== 'admin') {
-            show_error('403 Forbidden', 'Administrator access is required for this action.', 'error_general', 403);
-            exit;
-        }
+        $this->require_role('admin', 'Administrator access is required for this action.');
     }
-
 }

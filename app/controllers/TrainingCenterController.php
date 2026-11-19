@@ -1,53 +1,48 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-class TrainingCenterController extends Controller
+require_once APP_DIR . 'libraries/SpaController.php';
+
+class TrainingCenterController extends SpaController
 {
     public function __construct()
     {
         parent::__construct();
+        $this->require_role('admin', 'Administrator access is required.');
         $this->call->model('TrainingCenterModel');
     }
 
     public function index()
     {
-        $this->require_admin();
-        $errors = [];
+        $this->json(['centers' => $this->TrainingCenterModel->all_with_counts()]);
+    }
 
-        if ($this->form_validation->submitted()) {
-            $center = [
-                'center_code' => strtoupper(trim((string) $this->io->post('center_code'))),
-                'name' => trim((string) $this->io->post('name')),
-                'region' => trim((string) $this->io->post('region')),
-                'province' => trim((string) $this->io->post('province')),
-                'city' => trim((string) $this->io->post('city')),
-                'address' => trim((string) $this->io->post('address'))
-            ];
+    public function create()
+    {
+        $input = $this->input();
+        $center = [
+            'center_code' => strtoupper($this->str($input, 'center_code')),
+            'name' => $this->str($input, 'name'),
+            'region' => $this->str($input, 'region'),
+            'province' => $this->str($input, 'province'),
+            'city' => $this->str($input, 'city'),
+            'address' => $this->str($input, 'address')
+        ];
 
-            $errors = $this->validate_center($center);
-            if (!$errors) {
-                $this->TrainingCenterModel->create(
-                    $center['center_code'],
-                    $center['name'],
-                    $center['region'],
-                    $center['province'],
-                    $center['city'],
-                    $center['address']
-                );
-                $this->session->set_flashdata('notification', 'Training center added.');
-                header('Location: ' . site_url('/admin/centers'));
-                exit;
-            }
-        } else {
-            $center = [];
+        $errors = $this->validate_center($center);
+        if ($errors) {
+            $this->json_errors($errors);
         }
 
-        $this->call->view('centers/index', [
-            'centers' => $this->TrainingCenterModel->all_with_counts(),
-            'center' => $center,
-            'errors' => $errors,
-            'notification' => $this->session->flashdata('notification')
-        ]);
+        $this->TrainingCenterModel->create(
+            $center['center_code'],
+            $center['name'],
+            $center['region'],
+            $center['province'],
+            $center['city'],
+            $center['address']
+        );
+        $this->json(['message' => 'Training center added.'], 201);
     }
 
     private function validate_center($center)
@@ -74,13 +69,5 @@ class TrainingCenterController extends Controller
             $errors[] = 'That training center code is already in use.';
         }
         return $errors;
-    }
-
-    private function require_admin()
-    {
-        if ($this->session->userdata('user_role') !== 'admin') {
-            show_error('403 Forbidden', 'Administrator access is required.', 'error_general', 403);
-            exit;
-        }
     }
 }

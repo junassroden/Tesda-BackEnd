@@ -1,72 +1,72 @@
 <?php
 
 $router->get('/', 'Welcome::index');
-$router->get('/login', 'AuthController::login');
-$router->post('/login', 'AuthController::login');
-$router->get('/apply', 'AuthController::apply');
-$router->post('/apply', 'AuthController::apply');
-$router->post('/logout', 'AuthController::logout');
-$router->get('/logout', 'AuthController::logout');
 
-$router->group(['middleware' => 'AuthMiddleware'], function ($router) {
+// JSON endpoints for the React front end (Front-End/). Authentication uses the
+// session cookie; access checks live in each controller (see SpaController).
+$router->group(['prefix' => '/api/app'], function ($router) {
+    // Session and public pages
+    $router->get('/session', 'AuthController::session_info');
+    $router->post('/login', 'AuthController::login');
+    $router->post('/logout', 'AuthController::logout');
+    $router->get('/apply/centers', 'AuthController::centers');
+    $router->post('/apply', 'AuthController::apply');
+
     $router->get('/dashboard', 'Welcome::dashboard');
-});
 
-$router->group(['middleware' => ['AuthMiddleware', 'StudentRoleMiddleware']], function ($router) {
-    $router->get('/profile', 'StudentController::index');
-    $router->get('/student-profile', 'StudentController::profile');
-    $router->post('/student-profile', 'StudentController::profile');
-});
+    // Students
+    $router->get('/student/courses', 'StudentController::courses');
+    $router->get('/student/profile', 'StudentController::profile');
+    $router->put('/student/profile', 'StudentController::update_profile');
 
-$router->group(['middleware' => ['AuthMiddleware', 'StaffAdminMiddleware']], function ($router) {
-    $router->get('/show-users', 'UserController::showUsers');
-    $router->get('/admin/users/create', 'UserController::create');
-    $router->post('/admin/users/create', 'UserController::create');
-    $router->get('/admin/users/edit/{id}', 'UserController::edit');
-    $router->post('/admin/users/edit/{id}', 'UserController::edit');
-    $router->post('/admin/users/delete/{id}', 'UserController::delete');
-    $router->get('/admin/courses', 'CourseController::index');
-    $router->get('/admin/courses/create', 'CourseController::create');
-    $router->post('/admin/courses/create', 'CourseController::create');
-    $router->get('/admin/courses/edit/{id}', 'CourseController::edit');
-    $router->post('/admin/courses/edit/{id}', 'CourseController::edit');
-    $router->post('/admin/courses/delete/{id}', 'CourseController::delete');
-});
-
-$router->group(['middleware' => ['AuthMiddleware', 'AdminMiddleware']], function ($router) {
-    $router->get('/admin/document-ai', 'DocumentAIController::index');
-    $router->post('/admin/document-ai', 'DocumentAIController::index');
-    $router->post('/admin/document-ai/sample', 'DocumentAIController::sample');
-    $router->post('/admin/document-ai/text', 'DocumentAIController::classify_text');
-    $router->get('/admin/centers', 'TrainingCenterController::index');
-    $router->post('/admin/centers', 'TrainingCenterController::index');
-});
-
-$router->group(['middleware' => ['AuthMiddleware', 'StaffAdminMiddleware']], function ($router) {
-    $router->get('/documents', 'DocumentArchiveController::index');
-    $router->post('/documents', 'DocumentArchiveController::index');
-    $router->get('/documents/download/{id}', 'DocumentArchiveController::download');
-});
-
-$router->group(['middleware' => ['AuthMiddleware', 'CenterAdminMiddleware']], function ($router) {
-    $router->get('/center/applications', 'CenterApplicationController::index');
-    $router->post('/center/applications/{id}/approve', 'CenterApplicationController::approve');
-    $router->post('/center/applications/{id}/reject', 'CenterApplicationController::reject');
-});
-
-$router->group(['middleware' => ['AuthMiddleware', 'InstructorMiddleware']], function ($router) {
+    // Instructors
     $router->get('/instructor', 'InstructorController::index');
     $router->post('/instructor/enroll', 'InstructorController::enroll');
-    $router->post('/instructor/course/{id}', 'CourseController::update_delivery_details');
-    $router->post('/instructor/course/{id}/materials', 'CourseController::add_material');
-});
+    $router->put('/instructor/courses/{id}', 'CourseController::update_delivery_details');
+    $router->post('/instructor/courses/{id}/materials', 'CourseController::add_material');
 
-$router->group(['middleware' => ['AuthMiddleware', 'StudentRoleMiddleware']], function ($router) {
-    $router->get('/my-courses', 'StudentController::courses');
-});
+    // Courses
+    $router->get('/course-options', 'CourseController::form_options');
+    $router->get('/courses', 'CourseController::index');
+    $router->post('/courses', 'CourseController::create');
+    $router->get('/courses/{id}', 'CourseController::detail');
+    $router->put('/courses/{id}', 'CourseController::update');
+    $router->delete('/courses/{id}', 'CourseController::delete');
 
-$router->group(['middleware' => 'AuthMiddleware'], function ($router) {
-    $router->get('/course/{id}', 'CourseController::detail');
+    // User accounts
+    $router->get('/user-options', 'UserController::form_options');
+    $router->get('/users', 'UserController::index');
+    $router->post('/users', 'UserController::create');
+    $router->get('/users/{id}', 'UserController::show');
+    $router->put('/users/{id}', 'UserController::update');
+    $router->delete('/users/{id}', 'UserController::delete');
+
+    // Training centers and applications
+    $router->get('/centers', 'TrainingCenterController::index');
+    $router->post('/centers', 'TrainingCenterController::create');
+    $router->get('/applications', 'CenterApplicationController::index');
+    $router->post('/applications/{id}/approve', 'CenterApplicationController::approve');
+    $router->post('/applications/{id}/reject', 'CenterApplicationController::reject');
+
+    // Inventory
+    $router->get('/products', 'ProductController::index');
+    $router->post('/products', 'ProductController::create');
+    $router->get('/products/{id}', 'ProductController::show');
+    $router->put('/products/{id}', 'ProductController::update');
+    $router->delete('/products/{id}', 'ProductController::delete');
+
+    // Document AI lab
+    $router->post('/document-ai/analyze', 'DocumentAIController::analyze');
+    $router->post('/document-ai/sample', 'DocumentAIController::sample');
+    $router->post('/document-ai/text', 'DocumentAIController::classify_text');
+
+    // Document archive
+    $router->get('/documents', 'DocumentArchiveController::index');
+    $router->post('/documents', 'DocumentArchiveController::upload');
+    $router->get('/documents/chat', 'DocumentArchiveController::chat_history');
+    $router->post('/documents/chat', 'DocumentArchiveController::chat');
+    $router->delete('/documents/chat', 'DocumentArchiveController::clear_chat');
+    $router->get('/documents/{id}/download', 'DocumentArchiveController::download');
 });
 
 // API authentication and product CRUD
@@ -104,10 +104,3 @@ $router->get('/migration/rollback', 'MigrationController::rollback');
 $router->get('/migration/rollback-all', 'MigrationController::rollback_all');
 $router->get('/migration/refresh', 'MigrationController::refresh');
 $router->get('/migration/status', 'MigrationController::status');
-
-$router->group(['middleware' => 'AuthMiddleware'], function ($router) {
-    $router->get('/products', 'ProductController::read');
-    $router->any('/products/create', 'ProductController::create');
-    $router->any('/products/edit/{id}', 'ProductController::edit');
-    $router->get('/products/delete/{id}', 'ProductController::delete');
-});
