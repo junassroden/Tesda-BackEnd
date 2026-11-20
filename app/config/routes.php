@@ -5,14 +5,11 @@ $router->get('/', 'Welcome::index');
 // JSON endpoints for the React front end (Front-End/). Authentication uses the
 // session cookie; access checks live in each controller (see SpaController).
 $router->group(['prefix' => '/api/app'], function ($router) {
-    // Session and public pages
+    // Session
     $router->get('/session', 'AuthController::session_info');
     $router->post('/login', 'AuthController::login');
     $router->post('/logout', 'AuthController::logout');
-    $router->get('/apply/centers', 'AuthController::centers');
-    $router->post('/apply', 'AuthController::apply');
 
-    $router->get('/dashboard', 'Welcome::dashboard');
 
     // Students
     $router->get('/student/courses', 'StudentController::courses');
@@ -33,20 +30,9 @@ $router->group(['prefix' => '/api/app'], function ($router) {
     $router->put('/courses/{id}', 'CourseController::update');
     $router->delete('/courses/{id}', 'CourseController::delete');
 
-    // User accounts
-    $router->get('/user-options', 'UserController::form_options');
-    $router->get('/users', 'UserController::index');
-    $router->post('/users', 'UserController::create');
-    $router->get('/users/{id}', 'UserController::show');
-    $router->put('/users/{id}', 'UserController::update');
-    $router->delete('/users/{id}', 'UserController::delete');
-
-    // Training centers and applications
+    // Training centers
     $router->get('/centers', 'TrainingCenterController::index');
     $router->post('/centers', 'TrainingCenterController::create');
-    $router->get('/applications', 'CenterApplicationController::index');
-    $router->post('/applications/{id}/approve', 'CenterApplicationController::approve');
-    $router->post('/applications/{id}/reject', 'CenterApplicationController::reject');
 
     // Inventory
     $router->get('/products', 'ProductController::index');
@@ -55,6 +41,28 @@ $router->group(['prefix' => '/api/app'], function ($router) {
     $router->put('/products/{id}', 'ProductController::update');
     $router->delete('/products/{id}', 'ProductController::delete');
 
+    // Supply requests (learning center -> main office)
+    $router->get('/inventory-requests', 'InventoryRequestController::index');
+    $router->post('/inventory-requests', 'InventoryRequestController::create');
+    $router->get('/inventory-requests/{id}', 'InventoryRequestController::show');
+    $router->post('/inventory-requests/{id}/review', 'InventoryRequestController::review');
+    $router->post('/inventory-requests/{id}/release', 'InventoryRequestController::release');
+    $router->post('/inventory-requests/{id}/received', 'InventoryRequestController::received');
+    // Allowance requests (one per batch) and the trainee checklist
+    $router->get('/allowance-requests', 'AllowanceController::index');
+    $router->post('/allowance-requests', 'AllowanceController::create');
+    $router->get('/allowance-requests/{id}', 'AllowanceController::show');
+    $router->put('/allowance-requests/{id}/students/{studentId}', 'AllowanceController::check_student');
+    $router->post('/allowance-requests/{id}/status', 'AllowanceController::set_status');
+    // Batches, trainees, delivery personnel
+    $router->get('/batches', 'BatchController::center_batches');
+    $router->get('/courses/{id}/batches', 'BatchController::index');
+    $router->post('/courses/{id}/batches', 'BatchController::create');
+    $router->get('/batches/{id}/students', 'BatchController::students');
+    $router->get('/delivery-personnel', 'BatchController::delivery');
+    $router->post('/delivery-personnel', 'BatchController::add_delivery');
+    // Dashboard numbers
+    $router->get('/summary', 'SummaryController::index');
     // Document AI lab
     $router->post('/document-ai/analyze', 'DocumentAIController::analyze');
     $router->post('/document-ai/sample', 'DocumentAIController::sample');
@@ -68,39 +76,3 @@ $router->group(['prefix' => '/api/app'], function ($router) {
     $router->delete('/documents/chat', 'DocumentArchiveController::clear_chat');
     $router->get('/documents/{id}/download', 'DocumentArchiveController::download');
 });
-
-// API authentication and product CRUD
-$router->group(['prefix' => '/api'], function ($router) {
-    $router->post('/login', 'ApiController::login');
-    $router->post('/register', 'ApiController::register');
-    $router->post('/logout', 'ApiController::logout');
-    $router->post('/refresh', 'ApiController::refresh');
-    $router->get('/profile', 'ApiController::profile');
-    $router->get('/users', 'ApiController::list');
-    $router->post('/users', 'ApiController::create');
-    $router->put('/users/{id}', 'ApiController::update');
-    $router->delete('/users/{id}', 'ApiController::delete');
-    $router->get('/products', 'ApiController::products');
-    $router->post('/products', 'ApiController::product_create');
-    $router->put('/products/{id}', 'ApiController::product_update');
-    $router->delete('/products/{id}', 'ApiController::product_delete');
-
-    // Browser clients send OPTIONS before JSON requests.
-    $router->options('/login', 'ApiController::login');
-    $router->options('/register', 'ApiController::register');
-    $router->options('/logout', 'ApiController::logout');
-    $router->options('/refresh', 'ApiController::refresh');
-    $router->options('/profile', 'ApiController::profile');
-    $router->options('/users', 'ApiController::list');
-    $router->options('/users/{id}', 'ApiController::update');
-    $router->options('/products', 'ApiController::products');
-    $router->options('/products/{id}', 'ApiController::product_update');
-});
-
-// lab 6 migrations
-$router->get('/migration/create/{migration_class}', 'MigrationController::create_migration');
-$router->get('/migration/migrate', 'MigrationController::migrate');
-$router->get('/migration/rollback', 'MigrationController::rollback');
-$router->get('/migration/rollback-all', 'MigrationController::rollback_all');
-$router->get('/migration/refresh', 'MigrationController::refresh');
-$router->get('/migration/status', 'MigrationController::status');
