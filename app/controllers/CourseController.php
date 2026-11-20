@@ -15,212 +15,172 @@ class CourseController extends SpaController
         $this->call->model('CourseMaterialModel');
     }
 
+    /** GET /courses */
     public function index()
     {
         $this->require_staff_admin();
-        $this->json([
-            'courses' => $this->CourseModel->all($this->is_center_admin() ? $this->center_id() : null)
-        ]);
+        $this->json(['courses' => $this->CourseModel->listing($this->is_center_admin() ? $this->center_id() : null)]);
     }
 
+    /** GET /course-options */
     public function form_options()
     {
         $this->require_staff_admin();
-        $this->json(['training_centers' => $this->form_centers()]);
+        $centers = $this->is_center_admin()
+            ? array_values(array_filter([$this->TrainingCenterModel->find_active($this->center_id())]))
+            : $this->TrainingCenterModel->all_active();
+        $this->json(['training_centers' => $centers]);
     }
 
+    /** GET /courses/{id} */
     public function detail($id)
     {
-        $userId = $this->user_id();
+        $id = (int) $id;
         $role = $this->role();
-        $course = in_array($role, ['admin', 'student'], true)
-            ? $this->CourseModel->find((int) $id)
-            : $this->CourseModel->for_center((int) $id, $this->center_id());
+        if (!in_array($role, ['admin', 'center_admin', 'instructor', 'student'], true)) {
+            $this->json_error('This page is not available for your account role.', 403);
+        }
 
+        // Admins and students may open any course; center staff only their own center's.
+        $scope = in_array($role, ['admin', 'student'], true) ? null : $this->center_id();
+        $course = $this->CourseModel->detail($id, $scope);
         if (!$course) {
             $this->json_error('Course not found.', 404);
         }
 
         $enrollment = null;
         if ($role === 'student') {
-            if (!$this->EnrollmentModel->student_is_enrolled($userId, (int) $id)) {
+            if (!$this->EnrollmentModel->exists(['student_id' => $this->user_id(), 'course_id' => $id, 'status' => 'enrolled'])) {
                 $this->json_error('You must be enrolled to view this course.', 403);
             }
-            foreach ($this->EnrollmentModel->for_student($userId) as $studentCourse) {
-                if ((int) $studentCourse['course_id'] === (int) $id) {
-                    $enrollment = $studentCourse;
+            foreach ($this->EnrollmentModel->for_student($this->user_id()) as $row) {
+                if ((int) $row['course_id'] === $id) {
+                    $enrollment = $row;
                     break;
                 }
             }
-        } elseif (!in_array($role, ['admin', 'center_admin', 'instructor'], true)) {
-            $this->json_error('This page is not available for your account role.', 403);
         }
 
         $this->json([
             'course' => $course,
             'enrollment' => $enrollment,
-            'roster' => $role === 'student' ? [] : $this->EnrollmentModel->roster_for_course((int) $id),
-            'materials' => $this->CourseMaterialModel->for_course((int) $id)
+            'roster' => $role === 'student' ? [] : $this->EnrollmentModel->roster_for_course($id),
+            'materials' => $this->CourseMaterialModel->for_course($id),
         ]);
     }
 
+    /** POST /instructor/courses/{id}/materials  { title, description, resource_url } */
     public function add_material($id)
     {
         $this->require_role('instructor', 'Instructor access is required.');
-        if (!$this->CourseModel->for_center((int) $id, $this->center_id())) {
-            $this->json_error('Course not found.', 404);
-        }
-
+        $this->course_in_my_center((int) $id);
+        $this->validate([
+            'title|Title' => 'required|max_length[150]',
+            'description|Description' => 'max_length[500]',
+            'resource_url|Material link' => 'required|max_length[2048]',
+        ]);
         $input = $this->input();
-        $title = $this->str($input, 'title');
-        $description = $this->str($input, 'description');
         $url = $this->str($input, 'resource_url');
         $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
-
-        if (
-            $title === ''
-            || strlen($title) > 150
-            || strlen($description) > 500
-            || strlen($url) > 2048
-            || !filter_var($url, FILTER_VALIDATE_URL)
-            || !in_array($scheme, ['http', 'https'], true)
-        ) {
-            $this->json_error('Enter a title, an optional description, and a valid http or https material link.', 422);
+        if (!filter_var($url, FILTER_VALIDATE_URL) || !in_array($scheme, ['http', 'https'], true)) {
+            $this->json_error('Enter a valid http or https material link.', 422);
         }
 
-        $this->CourseMaterialModel->add((int) $id, $this->user_id(), $title, $description, $url);
+        $this->CourseMaterialModel->insert([
+            'course_id' => (int) $id,
+            'uploaded_by' => $this->user_id(),
+            'title' => $this->str($input, 'title'),
+            'description' => $this->str($input, 'description'),
+            'resource_url' => $url,
+        ]);
         $this->json(['message' => 'Course material shared with enrolled students.'], 201);
     }
 
+    /** PUT /instructor/courses/{id}  { class_days, class_schedule, course_outline } */
     public function update_delivery_details($id)
     {
         $this->require_role('instructor', 'Instructor access is required.');
-        if (!$this->CourseModel->for_center((int) $id, $this->center_id())) {
-            $this->json_error('Course not found.', 404);
-        }
-
+        $this->course_in_my_center((int) $id);
+        $this->validate([
+            'class_days|Class days' => 'max_length[150]',
+            'class_schedule|Schedule' => 'max_length[10000]',
+            'course_outline|Course outline' => 'max_length[20000]',
+        ]);
         $input = $this->input();
-        $classDays = $this->str($input, 'class_days');
-        $classSchedule = $this->str($input, 'class_schedule');
-        $courseOutline = $this->str($input, 'course_outline');
-        if (strlen($classDays) > 150 || strlen($classSchedule) > 10000 || strlen($courseOutline) > 20000) {
-            $this->json_error('Days, schedule, or outline exceed the allowed length.', 422);
-        }
-
-        $this->CourseModel->update_delivery_details((int) $id, $classDays, $classSchedule, $courseOutline);
+        $this->CourseModel->update((int) $id, [
+            'class_days' => $this->str($input, 'class_days'),
+            'class_schedule' => $this->str($input, 'class_schedule'),
+            'course_outline' => $this->str($input, 'course_outline'),
+        ]);
         $this->json(['message' => 'Course schedule and outline updated.']);
     }
 
+    /** POST /courses */
     public function create()
     {
         $this->require_staff_admin();
         $this->save(null);
     }
 
+    /** PUT /courses/{id} */
     public function update($id)
     {
         $this->require_staff_admin();
-        if (!$this->find_manageable_course((int) $id)) {
-            $this->json_error('Course not found.', 404);
-        }
+        $this->manageable_course((int) $id);
         $this->save((int) $id);
     }
 
+    /** DELETE /courses/{id} */
     public function delete($id)
     {
         $this->require_staff_admin();
-        if (!$this->find_manageable_course((int) $id)) {
-            $this->json_error('Course not found.', 404);
-        }
+        $this->manageable_course((int) $id);
         $this->CourseModel->delete((int) $id);
         $this->json(['message' => 'Course deleted successfully.']);
     }
 
     private function save($id)
     {
+        $this->validate([
+            'course_code|Course code' => 'required|min_length[2]|max_length[40]|alpha_numeric_dash',
+            'course_name|Course name' => 'required|max_length[150]',
+            'qualification|Qualification' => 'required|min_length[2]|max_length[30]|alpha_numeric_space',
+            'description|Description' => 'max_length[10000]',
+            'capacity|Capacity' => 'required|numeric|greater_than_equal_to[1]|less_than_equal_to[10000]',
+            'status|Status' => 'required|in_list[open,closed]',
+            'class_days|Class days' => 'max_length[150]',
+            'class_schedule|Schedule' => 'max_length[10000]',
+            'course_outline|Course outline' => 'max_length[20000]',
+        ]);
+
         $input = $this->input();
+        $centerId = $this->is_center_admin() ? $this->center_id() : (int) ($input['training_center_id'] ?? 0);
+        if (!$this->TrainingCenterModel->find_active($centerId)) {
+            $this->json_error('Select an active training center.', 422);
+        }
+        $code = strtoupper($this->str($input, 'course_code'));
+        if ($this->CourseModel->code_taken($code, $centerId, (int) $id)) {
+            $this->json_error('That course code is already in use.', 422);
+        }
+
         $course = [
-            'course_code' => strtoupper($this->str($input, 'course_code')),
+            'training_center_id' => $centerId,
+            'course_code' => $code,
             'course_name' => $this->str($input, 'course_name'),
             'qualification' => strtoupper($this->str($input, 'qualification')),
             'description' => $this->str($input, 'description'),
-            'capacity' => (int) ($input['capacity'] ?? 0),
+            'capacity' => (int) $input['capacity'],
             'status' => $this->str($input, 'status'),
-            'training_center_id' => (int) ($input['training_center_id'] ?? 0),
             'class_days' => $this->str($input, 'class_days'),
             'class_schedule' => $this->str($input, 'class_schedule'),
-            'course_outline' => $this->str($input, 'course_outline')
+            'course_outline' => $this->str($input, 'course_outline'),
         ];
-        if ($this->is_center_admin()) {
-            $course['training_center_id'] = $this->center_id();
+        if ($id === null) {
+            $this->CourseModel->insert($course);
+        } else {
+            $this->CourseModel->update($id, $course);
         }
-
-        $errors = $this->validate_course($course, $id);
-        if ($errors) {
-            $this->json_errors($errors);
-        }
-
-        $this->CourseModel->save(
-            $course['course_code'],
-            $course['course_name'],
-            $course['qualification'],
-            $course['description'],
-            $course['capacity'],
-            $course['status'],
-            $course['training_center_id'],
-            $course['class_days'],
-            $course['class_schedule'],
-            $course['course_outline'],
-            $id
-        );
         $this->json(['message' => 'Course saved successfully.'], $id === null ? 201 : 200);
-    }
-
-    private function validate_course($course, $excludeId)
-    {
-        $errors = [];
-        if (!preg_match('/^[A-Z0-9-]{2,40}$/', $course['course_code'])) {
-            $errors[] = 'Course code must use 2 to 40 letters, numbers, or hyphens.';
-        }
-        if ($course['course_name'] === '' || strlen($course['course_name']) > 150) {
-            $errors[] = 'Course name is required and must be at most 150 characters.';
-        }
-        if (!preg_match('/^[A-Z0-9 -]{2,30}$/', $course['qualification'])) {
-            $errors[] = 'Enter a valid qualification such as NC II.';
-        }
-        if ($course['capacity'] < 1 || $course['capacity'] > 10000) {
-            $errors[] = 'Capacity must be between 1 and 10,000.';
-        }
-        if (strlen($course['description']) > 10000 || strlen($course['class_days']) > 150) {
-            $errors[] = 'Description or class days exceed the allowed length.';
-        }
-        if (strlen($course['class_schedule']) > 10000 || strlen($course['course_outline']) > 20000) {
-            $errors[] = 'Schedule or course outline exceeds the allowed length.';
-        }
-        if (!in_array($course['status'], ['open', 'closed'], true)) {
-            $errors[] = 'Select a valid course status.';
-        }
-        $center = $this->db->raw(
-            'SELECT id FROM training_centers WHERE id = ? AND is_active = 1 LIMIT 1',
-            [$course['training_center_id']]
-        )->fetch(PDO::FETCH_ASSOC);
-        if (!$center) {
-            $errors[] = 'Select an active training center.';
-        }
-        if ($this->is_center_admin() && (int) $course['training_center_id'] !== $this->center_id()) {
-            $errors[] = 'You can only manage courses for your assigned training center.';
-        }
-        $sql = 'SELECT COUNT(*) AS total FROM courses WHERE course_code = ? AND training_center_id = ?';
-        $args = [$course['course_code'], $course['training_center_id']];
-        if ($excludeId !== null) {
-            $sql .= ' AND id <> ?';
-            $args[] = $excludeId;
-        }
-        $existing = $this->db->raw($sql, $args)->fetch(PDO::FETCH_ASSOC);
-        if ((int) ($existing['total'] ?? 0) > 0) {
-            $errors[] = 'That course code is already in use.';
-        }
-        return $errors;
     }
 
     private function require_staff_admin()
@@ -228,19 +188,24 @@ class CourseController extends SpaController
         $this->require_role(['admin', 'center_admin'], 'Training center management access is required.');
     }
 
-    private function form_centers()
+    /** The course, or a 404. Center admins can only manage their own center's courses. */
+    private function manageable_course($id)
     {
-        if (!$this->is_center_admin()) {
-            return $this->TrainingCenterModel->all_active();
+        $course = $this->is_center_admin()
+            ? $this->CourseModel->in_center($id, $this->center_id())
+            : $this->CourseModel->find($id);
+        if (!$course) {
+            $this->json_error('Course not found.', 404);
         }
-        return array_values(array_filter([$this->TrainingCenterModel->find_active($this->center_id())]));
+        return $course;
     }
 
-    private function find_manageable_course($id)
+    private function course_in_my_center($id)
     {
-        if ($this->is_center_admin()) {
-            return $this->CourseModel->for_center($id, $this->center_id());
+        $course = $this->CourseModel->in_center($id, $this->center_id());
+        if (!$course) {
+            $this->json_error('Course not found.', 404);
         }
-        return $this->CourseModel->find($id);
+        return $course;
     }
 }
