@@ -1,61 +1,67 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
+/** training_centers: the main office (TESDA-MAIN) and every learning center. */
 class TrainingCenterModel extends Model
 {
-    public function __construct()
-    {
-        parent::__construct();
-    }
+    protected $table = 'training_centers';
+    protected $primary_key = 'id';
+    protected $fillable = [
+        'center_code', 'name', 'center_type', 'region', 'province', 'city',
+        'address', 'contact_email', 'contact_phone', 'is_active',
+    ];
+
+    const MAIN_OFFICE_CODE = 'TESDA-MAIN';
 
     public function all_active()
     {
-        return $this->db->table('training_centers')
-            ->where('is_active', 1)
-            ->order_by('name', 'ASC')
-            ->get_all();
+        return $this->filter(['is_active' => 1])->order_by('name', 'ASC')->get_all();
     }
 
     public function find_active($id)
     {
-        return $this->db->table('training_centers')
-            ->where('id', (int) $id)
-            ->where('is_active', 1)
-            ->get();
+        return $this->filter(['id' => (int) $id, 'is_active' => 1])->get();
+    }
+
+    public function main_office()
+    {
+        return $this->filter(['center_code' => self::MAIN_OFFICE_CODE, 'is_active' => 1])->get();
     }
 
     public function is_main_office($id)
     {
-        $center = $this->db->raw(
-            'SELECT center_code FROM training_centers
-             WHERE id = ? AND is_active = 1
-             LIMIT 1',
-            [(int) $id]
-        )->fetch(PDO::FETCH_ASSOC);
-        return ($center['center_code'] ?? '') === 'TESDA-MAIN';
+        $center = $this->find_active($id);
+        return ($center['center_code'] ?? '') === self::MAIN_OFFICE_CODE;
     }
 
+    public function code_taken($code)
+    {
+        return $this->exists(['center_code' => $code]);
+    }
+
+    /** Every center with how many users and courses it has. */
     public function all_with_counts()
     {
-        return $this->db->raw(
-            'SELECT tc.*,
-                    (SELECT COUNT(*) FROM users u WHERE u.training_center_id = tc.id) AS user_count,
-                    (SELECT COUNT(*) FROM courses c WHERE c.training_center_id = tc.id) AS course_count
-             FROM training_centers tc
-             ORDER BY tc.name ASC'
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $users = $this->counts_by_center('users');
+        $courses = $this->counts_by_center('courses');
+
+        $centers = $this->query()->order_by('name', 'ASC')->get_all();
+        foreach ($centers as &$center) {
+            $center['user_count'] = $users[$center['id']] ?? 0;
+            $center['course_count'] = $courses[$center['id']] ?? 0;
+        }
+        return $centers;
     }
 
-    public function create($code, $name, $region, $province, $city, $address)
+    /** [center_id => row count] for a table with a training_center_id column. */
+    private function counts_by_center($table)
     {
-        return $this->db->table('training_centers')->insert([
-            'center_code' => $code,
-            'name' => $name,
-            'region' => $region ?: null,
-            'province' => $province ?: null,
-            'city' => $city ?: null,
-            'address' => $address ?: null,
-            'is_active' => 1
-        ]);
+        $rows = $this->db->table($table)
+            ->select('training_center_id')
+            ->select_count('id', 'total')
+            ->where_not_null('training_center_id')
+            ->group_by('training_center_id')
+            ->get_all();
+        return array_map('intval', array_column($rows, 'total', 'training_center_id'));
     }
 }
