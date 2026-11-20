@@ -12,62 +12,38 @@ class TrainingCenterController extends SpaController
         $this->call->model('TrainingCenterModel');
     }
 
+    /** GET /centers */
     public function index()
     {
         $this->json(['centers' => $this->TrainingCenterModel->all_with_counts()]);
     }
 
+    /** POST /centers  { center_code, name, region, province, city, address } */
     public function create()
     {
+        $this->validate([
+            'center_code|Center code' => 'required|min_length[2]|max_length[40]|alpha_numeric_dash',
+            'name|Center name' => 'required|max_length[150]',
+            'region|Region' => 'max_length[100]',
+            'province|Province' => 'max_length[100]',
+            'city|City' => 'max_length[100]',
+            'address|Address' => 'max_length[255]',
+        ]);
         $input = $this->input();
-        $center = [
-            'center_code' => strtoupper($this->str($input, 'center_code')),
+        $code = strtoupper($this->str($input, 'center_code'));
+        if ($this->TrainingCenterModel->code_taken($code)) {
+            $this->json_error('That training center code is already in use.', 422);
+        }
+
+        $this->TrainingCenterModel->insert([
+            'center_code' => $code,
             'name' => $this->str($input, 'name'),
             'region' => $this->str($input, 'region'),
             'province' => $this->str($input, 'province'),
             'city' => $this->str($input, 'city'),
-            'address' => $this->str($input, 'address')
-        ];
-
-        $errors = $this->validate_center($center);
-        if ($errors) {
-            $this->json_errors($errors);
-        }
-
-        $this->TrainingCenterModel->create(
-            $center['center_code'],
-            $center['name'],
-            $center['region'],
-            $center['province'],
-            $center['city'],
-            $center['address']
-        );
+            'address' => $this->str($input, 'address'),
+            'is_active' => 1,
+        ]);
         $this->json(['message' => 'Training center added.'], 201);
-    }
-
-    private function validate_center($center)
-    {
-        $errors = [];
-        if (!preg_match('/^[A-Z0-9-]{2,40}$/', $center['center_code'])) {
-            $errors[] = 'Center code must use 2 to 40 letters, numbers, or hyphens.';
-        }
-        if ($center['name'] === '' || strlen($center['name']) > 150) {
-            $errors[] = 'Center name is required and must be at most 150 characters.';
-        }
-        if (strlen($center['region']) > 100 || strlen($center['province']) > 100 || strlen($center['city']) > 100) {
-            $errors[] = 'Region, province, and city must each be at most 100 characters.';
-        }
-        if (strlen($center['address']) > 255) {
-            $errors[] = 'Address must be at most 255 characters.';
-        }
-
-        $existing = $this->db->raw(
-            'SELECT id FROM training_centers WHERE center_code = ? LIMIT 1',
-            [$center['center_code']]
-        )->fetch(PDO::FETCH_ASSOC);
-        if ($existing) {
-            $errors[] = 'That training center code is already in use.';
-        }
-        return $errors;
     }
 }
