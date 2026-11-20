@@ -1,7 +1,0 @@
-torch
-torchvision
-Pillow
-pytesseract
-joblib
-scikit-learn
-PyMuPDF>=1.24,<2
