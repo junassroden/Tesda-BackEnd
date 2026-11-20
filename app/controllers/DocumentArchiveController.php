@@ -14,6 +14,7 @@ class DocumentArchiveController extends SpaController
         parent::__construct();
         $this->require_archive_access();
         $this->call->model('DocumentArchiveModel');
+        $this->call->model('TrainingCenterModel');
         $this->documentAI = new DocumentAIService();
         $this->archiveDirectory = ROOT_DIR . 'runtime' . DIRECTORY_SEPARATOR . 'document-archive';
     }
@@ -23,14 +24,14 @@ class DocumentArchiveController extends SpaController
         $centerId = $this->archive_center_id();
         $this->json([
             'documents' => $this->DocumentArchiveModel->recent($centerId),
-            'total_documents' => (int) $this->DocumentArchiveModel->count($centerId)
+            'total_documents' => $this->DocumentArchiveModel->count_for_center($centerId)
         ]);
     }
 
     public function upload()
     {
         $centerId = $this->archive_center_id();
-        $upload = $_FILES['document_file'] ?? null;
+        $upload = $this->file('document_file');
         $validationError = $this->validate_upload($upload);
         if ($validationError !== null) {
             $this->json_error($validationError, 422);
@@ -78,7 +79,7 @@ class DocumentArchiveController extends SpaController
 
     private function archive_center_id()
     {
-        $center = $this->DocumentArchiveModel->central_office();
+        $center = $this->TrainingCenterModel->main_office();
         if (!$center) {
             $this->json_error('The TESDA main office record is missing or inactive. Run the document archive SQL setup.', 500);
         }
@@ -87,10 +88,7 @@ class DocumentArchiveController extends SpaController
 
     public function download($id)
     {
-        $center = $this->DocumentArchiveModel->central_office();
-        $document = $center
-            ? $this->DocumentArchiveModel->find((int) $id, (int) $center['id'])
-            : null;
+        $document = $this->DocumentArchiveModel->in_center((int) $id, $this->archive_center_id());
         if (!$document) {
             $this->json_error('Document not found.', 404);
         }
@@ -111,11 +109,15 @@ class DocumentArchiveController extends SpaController
         $file = new finfo(FILEINFO_MIME_TYPE);
         $mimeType = $file->file($realPath) ?: 'application/octet-stream';
         $downloadName = preg_replace('/[\r\n"\\\\]/', '_', basename($document['original_name']));
-        header('Content-Type: ' . $mimeType);
-        header('Content-Length: ' . (string) filesize($realPath));
-        header('Content-Disposition: attachment; filename="' . $downloadName . '"; filename*=UTF-8\'\'' . rawurlencode($document['original_name']));
-        header('X-Content-Type-Options: nosniff');
-        header('Cache-Control: private, no-store');
+        $this->io->set_status_code(200);
+        $this->io->add_header([
+            'Content-Type' => $mimeType,
+            'Content-Length' => (string) filesize($realPath),
+            'Content-Disposition' => 'attachment; filename="' . $downloadName . '"; filename*=UTF-8\'\'' . rawurlencode($document['original_name']),
+            'X-Content-Type-Options' => 'nosniff',
+            'Cache-Control' => 'private, no-store',
+        ], null);
+        $this->io->send(); // headers only; the file is streamed below
         readfile($realPath);
         exit;
     }
@@ -146,9 +148,9 @@ class DocumentArchiveController extends SpaController
             }
 
             try {
-                $this->DocumentArchiveModel->create([
+                $this->DocumentArchiveModel->insert([
                     'training_center_id' => $centerId,
-                    'uploaded_by' => (int) $this->session->userdata('user_id'),
+                    'uploaded_by' => $this->user_id(),
                     'storage_key' => $storageKey,
                     'original_name' => $this->safe_original_name($upload['name']),
                     'mime_type' => $upload['mime_type'],
@@ -371,7 +373,7 @@ class DocumentArchiveController extends SpaController
             if (!is_numeric($documentId) || (int) $documentId < 1) {
                 continue;
             }
-            $document = $this->DocumentArchiveModel->find((int) $documentId, (int) $centerId);
+            $document = $this->DocumentArchiveModel->in_center((int) $documentId, (int) $centerId);
             if ($document) {
                 $documents[] = [
                     'id' => (int) $document['id'],
@@ -457,27 +459,16 @@ class DocumentArchiveController extends SpaController
     private function require_archive_access()
     {
         $this->require_login();
-        $userId = (int) $this->session->userdata('user_id');
-        $user = $this->db->raw(
-            'SELECT u.role, tc.center_code, tc.is_active AS center_is_active
-             FROM users u
-             LEFT JOIN training_centers tc ON tc.id = u.training_center_id
-             WHERE u.id = ? AND u.is_active = 1
-             LIMIT 1',
-            [$userId]
-        )->fetch(PDO::FETCH_ASSOC);
-
-        if (
-            !$user
-            || !(
-                $user['role'] === 'admin'
-                || (
-                    $user['role'] === 'center_admin'
-                    && $user['center_code'] === 'TESDA-MAIN'
-                    && (int) $user['center_is_active'] === 1
-                )
-            )
-        ) {
+        $this->call->model('UserModel');
+        $this->call->model('TrainingCenterModel');
+        $user = $this->UserModel->with_center($this->user_id());
+        $allowed = $user && (int) $user['is_active'] === 1 && (
+            $user['role'] === 'admin'
+            || ($user['role'] === 'center_admin'
+                && $user['center_code'] === TrainingCenterModel::MAIN_OFFICE_CODE
+                && (int) $user['center_is_active'] === 1)
+        );
+        if (!$allowed) {
             $this->json_error('Only TESDA administrators and main-office staff can access the document archive.', 403);
         }
     }
