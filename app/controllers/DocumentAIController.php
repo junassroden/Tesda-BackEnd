@@ -29,7 +29,7 @@ class DocumentAIController extends SpaController
 
     public function sample()
     {
-        $samplePath = ROOT_DIR . 'ai' . DIRECTORY_SEPARATOR . 'samples' . DIRECTORY_SEPARATOR . 'invoice.png';
+        $samplePath = DocumentAIService::ai_dir() . 'samples' . DIRECTORY_SEPARATOR . 'invoice.png';
         if (!is_file($samplePath)) {
             $this->json_error('The bundled sample invoice is missing.', 500);
         }
