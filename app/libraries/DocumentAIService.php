@@ -27,9 +27,27 @@ class DocumentAIService
         ]);
     }
 
+    /**
+     * Folder that holds the document AI worker, models and samples.
+     * Set DOCUMENT_AI_DIR to override; by default it is the neighboring
+     * AI_Assistant/document_ai folder (TesdaNexus/AI_Assistant/document_ai).
+     */
+    public static function ai_dir()
+    {
+        $configured = getenv('DOCUMENT_AI_DIR');
+        if ($configured !== false && trim($configured) !== '') {
+            return rtrim(trim($configured), '\\/') . DIRECTORY_SEPARATOR;
+        }
+
+        return dirname(rtrim(ROOT_DIR, '\\/'))
+            . DIRECTORY_SEPARATOR . 'AI_Assistant'
+            . DIRECTORY_SEPARATOR . 'document_ai'
+            . DIRECTORY_SEPARATOR;
+    }
+
     private function run($payload)
     {
-        $workerPath = ROOT_DIR . 'ai' . DIRECTORY_SEPARATOR . 'inference.py';
+        $workerPath = self::ai_dir() . 'inference.py';
         if (!is_file($workerPath)) {
             throw new RuntimeException('The document AI worker is missing from the project.');
         }
@@ -41,7 +59,7 @@ class DocumentAIService
             1 => ['pipe', 'w'],
             2 => ['pipe', 'w']
         ];
-        $process = proc_open($command, $descriptors, $pipes, ROOT_DIR);
+        $process = proc_open($command, $descriptors, $pipes, self::ai_dir());
         if (!is_resource($process)) {
             throw new RuntimeException('Could not start Python. Configure DOCUMENT_AI_PYTHON for the portal.');
         }
@@ -89,13 +107,20 @@ class DocumentAIService
             return trim($configured);
         }
 
-        $adjacentEnvironment = dirname(rtrim(ROOT_DIR, '\\/'))
-            . DIRECTORY_SEPARATOR . 'AI'
-            . DIRECTORY_SEPARATOR . '.venv'
-            . DIRECTORY_SEPARATOR . 'Scripts'
-            . DIRECTORY_SEPARATOR . 'python.exe';
-        if (is_file($adjacentEnvironment)) {
-            return $adjacentEnvironment;
+        // A virtual environment inside the AI folder (AI_Assistant/document_ai/.venv),
+        // then the older neighboring TesdaNexus/AI/.venv.
+        $candidates = [
+            self::ai_dir() . '.venv' . DIRECTORY_SEPARATOR . 'Scripts' . DIRECTORY_SEPARATOR . 'python.exe',
+            dirname(rtrim(ROOT_DIR, '\\/'))
+                . DIRECTORY_SEPARATOR . 'AI'
+                . DIRECTORY_SEPARATOR . '.venv'
+                . DIRECTORY_SEPARATOR . 'Scripts'
+                . DIRECTORY_SEPARATOR . 'python.exe',
+        ];
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate)) {
+                return $candidate;
+            }
         }
 
         return 'python';
