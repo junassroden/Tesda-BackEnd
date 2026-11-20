@@ -1,123 +1,86 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
+/** courses: the NC programs a learning center offers. */
 class CourseModel extends Model
 {
-    public function __construct()
+    protected $table = 'courses';
+    protected $primary_key = 'id';
+    protected $fillable = [
+        'training_center_id', 'course_code', 'course_name', 'qualification', 'description',
+        'class_days', 'class_schedule', 'course_outline', 'duration_hours', 'capacity', 'status',
+    ];
+
+    /** Course columns plus the center's name and location. */
+    private function with_center()
     {
-        parent::__construct();
+        return $this->db->table('courses c')
+            ->select('c.id, c.training_center_id, c.course_code, c.course_name, c.qualification, c.description,
+                      c.class_days, c.class_schedule, c.course_outline, c.duration_hours, c.capacity, c.status, c.created_at,
+                      tc.name AS training_center_name, tc.region, tc.province, tc.city, tc.address')
+            ->inner_join('training_centers tc', 'tc.id = c.training_center_id');
     }
 
-    public function all($trainingCenterId = null)
+    /** All courses (or one center's) with their enrolled-student count. */
+    public function listing($centerId = null)
     {
-        $sql = 'SELECT c.*, tc.name AS training_center_name,
-                    tc.region, tc.province, tc.city, tc.address,
-                    (SELECT COUNT(*) FROM enrollments e
-                     WHERE e.course_id = c.id AND e.status = \'enrolled\') AS enrollment_count
-             FROM courses c
-             INNER JOIN training_centers tc ON tc.id = c.training_center_id';
-        $args = [];
-        if ($trainingCenterId !== null) {
-            $sql .= ' WHERE c.training_center_id = ?';
-            $args[] = (int) $trainingCenterId;
+        $query = $this->with_center();
+        if ($centerId !== null) {
+            $query->where('c.training_center_id', (int) $centerId);
         }
-        $sql .= ' ORDER BY tc.name ASC, c.course_name ASC';
-        return $this->db->raw($sql, $args)->fetchAll(PDO::FETCH_ASSOC);
+        $courses = $query->order_by('c.course_name', 'ASC')->get_all();
+        return $this->attach_enrollment_counts($courses);
     }
 
-    public function open($trainingCenterId)
+    /** One course with center details, optionally limited to a center. */
+    public function detail($id, $centerId = null)
     {
-        return $this->db->raw(
-            "SELECT * FROM courses
-             WHERE status = 'open' AND training_center_id = ?
-             ORDER BY course_name ASC",
-            [$trainingCenterId]
-        )->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    public function find($id)
-    {
-        return $this->db->raw(
-            'SELECT c.*, tc.name AS training_center_name, tc.region, tc.province, tc.city, tc.address,
-                    (SELECT COUNT(*) FROM enrollments e
-                     WHERE e.course_id = c.id AND e.status = \'enrolled\') AS enrollment_count
-             FROM courses c
-             INNER JOIN training_centers tc ON tc.id = c.training_center_id
-             WHERE c.id = ?',
-            [$id]
-        )->fetch(PDO::FETCH_ASSOC);
-    }
-
-    public function count($trainingCenterId = null)
-    {
-        $sql = 'SELECT COUNT(*) AS total FROM courses';
-        $args = [];
-        if ($trainingCenterId !== null) {
-            $sql .= ' WHERE training_center_id = ?';
-            $args[] = (int) $trainingCenterId;
+        $query = $this->with_center()->where('c.id', (int) $id);
+        if ($centerId !== null) {
+            $query->where('c.training_center_id', (int) $centerId);
         }
-        $result = $this->db->raw($sql, $args)->fetch(PDO::FETCH_ASSOC);
-        return (int) ($result['total'] ?? 0);
+        $course = $query->get();
+        return $course ? $this->attach_enrollment_counts([$course])[0] : null;
     }
 
-    public function save(
-        $courseCode,
-        $courseName,
-        $qualification,
-        $description,
-        $capacity,
-        $status,
-        $trainingCenterId,
-        $classDays,
-        $classSchedule,
-        $courseOutline,
-        $id = null
-    )
+    /** Open courses of a center (for enrolling students). */
+    public function open($centerId)
     {
-        $data = [
-            'course_code' => $courseCode,
-            'course_name' => $courseName,
-            'qualification' => $qualification,
-            'description' => $description,
-            'capacity' => $capacity,
-            'status' => $status,
-            'training_center_id' => $trainingCenterId,
-            'class_days' => $classDays,
-            'class_schedule' => $classSchedule,
-            'course_outline' => $courseOutline
-        ];
+        return $this->filter(['status' => 'open', 'training_center_id' => (int) $centerId])
+            ->order_by('course_name', 'ASC')
+            ->get_all();
+    }
 
-        if ($id === null) {
-            return $this->db->table('courses')->insert($data);
+    /** The course if it belongs to the center. */
+    public function in_center($id, $centerId)
+    {
+        return $this->filter(['id' => (int) $id, 'training_center_id' => (int) $centerId])->get();
+    }
+
+    public function code_taken($code, $centerId, $exceptId = 0)
+    {
+        return (bool) $this->db->table($this->table)
+            ->where(['course_code' => $code, 'training_center_id' => (int) $centerId])
+            ->where('id', '!=', (int) $exceptId)
+            ->get();
+    }
+
+    private function attach_enrollment_counts(array $courses)
+    {
+        if (!$courses) {
+            return $courses;
         }
-        return $this->db->table('courses')->where('id', $id)->update($data);
-    }
-
-    public function delete($id)
-    {
-        return $this->db->table('courses')->where('id', $id)->delete();
-    }
-
-    public function update_delivery_details($id, $classDays, $classSchedule, $courseOutline)
-    {
-        return $this->db->table('courses')->where('id', $id)->update([
-            'class_days' => $classDays,
-            'class_schedule' => $classSchedule,
-            'course_outline' => $courseOutline
-        ]);
-    }
-
-    public function for_center($id, $trainingCenterId)
-    {
-        return $this->db->raw(
-            'SELECT c.*, tc.name AS training_center_name,
-                    tc.region, tc.province, tc.city, tc.address,
-                    (SELECT COUNT(*) FROM enrollments e
-                     WHERE e.course_id = c.id AND e.status = \'enrolled\') AS enrollment_count
-             FROM courses c
-             INNER JOIN training_centers tc ON tc.id = c.training_center_id
-             WHERE c.id = ? AND c.training_center_id = ?',
-            [$id, $trainingCenterId]
-        )->fetch(PDO::FETCH_ASSOC);
+        $rows = $this->db->table('enrollments')
+            ->select('course_id')
+            ->select_count('id', 'total')
+            ->in('course_id', array_column($courses, 'id'))
+            ->where('status', 'enrolled')
+            ->group_by('course_id')
+            ->get_all();
+        $counts = array_column($rows, 'total', 'course_id');
+        foreach ($courses as &$course) {
+            $course['enrollment_count'] = (int) ($counts[$course['id']] ?? 0);
+        }
+        return $courses;
     }
 }
