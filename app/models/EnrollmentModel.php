@@ -1,103 +1,79 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
+/** enrollments: which student is enrolled in which course, and with which teacher. */
 class EnrollmentModel extends Model
 {
-    public function __construct()
-    {
-        parent::__construct();
-    }
+    protected $table = 'enrollments';
+    protected $primary_key = 'id';
+    protected $fillable = ['student_id', 'course_id', 'instructor_id', 'status'];
 
-    public function count()
-    {
-        $result = $this->db->raw('SELECT COUNT(*) AS total FROM enrollments')->fetch(PDO::FETCH_ASSOC);
-        return (int) ($result['total'] ?? 0);
-    }
-
+    /** A student's active enrollments, with their place in each course's list. */
     public function for_student($studentId)
     {
-        return $this->db->raw(
-            'SELECT c.id AS course_id, c.course_code, c.course_name, c.qualification, c.description,
-                    c.class_days, c.class_schedule, c.course_outline, c.training_center_id,
-                    tc.name AS training_center_name, tc.region, tc.province, tc.city,
-                    e.status AS enrollment_status, e.enrolled_at,
-                    (SELECT COUNT(*) + 1
-                     FROM enrollments earlier
-                     WHERE earlier.course_id = e.course_id AND earlier.status = \'enrolled\'
-                       AND (earlier.enrolled_at < e.enrolled_at
-                            OR (earlier.enrolled_at = e.enrolled_at AND earlier.id < e.id))
-                    ) AS course_position,
-                    (SELECT COUNT(*) FROM enrollments total
-                    WHERE total.course_id = e.course_id AND total.status = \'enrolled\') AS course_student_count
-             FROM enrollments e
-             INNER JOIN courses c ON c.id = e.course_id
-             INNER JOIN training_centers tc ON tc.id = c.training_center_id
-             WHERE e.student_id = ? AND e.status = \'enrolled\'
-             ORDER BY e.enrolled_at DESC',
-            [$studentId]
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->db->table('enrollments e')
+            ->select('e.id, e.course_id, e.status AS enrollment_status, e.enrolled_at,
+                      c.course_code, c.course_name, c.qualification, c.description,
+                      c.class_days, c.class_schedule, c.course_outline, c.training_center_id,
+                      tc.name AS training_center_name, tc.region, tc.province, tc.city')
+            ->inner_join('courses c', 'c.id = e.course_id')
+            ->inner_join('training_centers tc', 'tc.id = c.training_center_id')
+            ->where(['e.student_id' => (int) $studentId, 'e.status' => 'enrolled'])
+            ->order_by('e.enrolled_at', 'DESC')
+            ->get_all();
+        if (!$rows) {
+            return [];
+        }
+
+        // Everyone enrolled in those courses, oldest first, to work out each position.
+        $classmates = $this->db->table($this->table)
+            ->select('id, course_id')
+            ->in('course_id', array_column($rows, 'course_id'))
+            ->where('status', 'enrolled')
+            ->order_by('enrolled_at', 'ASC')
+            ->get_all();
+        $byCourse = [];
+        foreach ($classmates as $c) {
+            $byCourse[$c['course_id']][] = (int) $c['id'];
+        }
+
+        foreach ($rows as &$row) {
+            $ids = $byCourse[$row['course_id']] ?? [];
+            $row['course_student_count'] = count($ids);
+            $row['course_position'] = array_search((int) $row['id'], $ids, true) + 1;
+            unset($row['id']);
+        }
+        return $rows;
     }
 
-    public function for_instructor($instructorId, $trainingCenterId)
+    /** Students a teacher enrolled at their center. */
+    public function for_instructor($instructorId, $centerId)
     {
-        return $this->db->raw(
-            'SELECT e.id, e.status, e.enrolled_at, c.id AS course_id, c.course_code,
-                    c.course_name, c.qualification, tc.name AS training_center_name,
-                    u.full_name, u.username, u.email
-             FROM enrollments e
-             INNER JOIN courses c ON c.id = e.course_id
-             INNER JOIN training_centers tc ON tc.id = c.training_center_id
-             INNER JOIN users u ON u.id = e.student_id
-             WHERE c.training_center_id = ? AND e.instructor_id = ? AND e.status = \'enrolled\'
-             ORDER BY e.enrolled_at DESC',
-            [$trainingCenterId, $instructorId]
-        )->fetchAll(PDO::FETCH_ASSOC);
+        return $this->db->table('enrollments e')
+            ->select('e.id, e.status, e.enrolled_at, c.id AS course_id, c.course_code, c.course_name, c.qualification,
+                      tc.name AS training_center_name, u.full_name, u.username, u.email')
+            ->inner_join('courses c', 'c.id = e.course_id')
+            ->inner_join('training_centers tc', 'tc.id = c.training_center_id')
+            ->inner_join('users u', 'u.id = e.student_id')
+            ->where(['c.training_center_id' => (int) $centerId, 'e.instructor_id' => (int) $instructorId, 'e.status' => 'enrolled'])
+            ->order_by('e.enrolled_at', 'DESC')
+            ->get_all();
     }
 
     public function roster_for_course($courseId)
     {
-        return $this->db->raw(
-            'SELECT u.full_name, u.username, u.email, e.enrolled_at, e.status
-             FROM enrollments e
-             INNER JOIN users u ON u.id = e.student_id
-             WHERE e.course_id = ? AND e.status = \'enrolled\'
-             ORDER BY e.enrolled_at ASC, e.id ASC',
-            [$courseId]
-        )->fetchAll(PDO::FETCH_ASSOC);
+        return $this->db->table('enrollments e')
+            ->select('u.full_name, u.username, u.email, e.enrolled_at, e.status')
+            ->inner_join('users u', 'u.id = e.student_id')
+            ->where(['e.course_id' => (int) $courseId, 'e.status' => 'enrolled'])
+            ->order_by('e.enrolled_at', 'ASC')
+            ->get_all();
     }
 
-    public function add($studentId, $courseId, $instructorId)
+    public function enrolled_count($courseId)
     {
-        return $this->db->table('enrollments')->insert([
-            'student_id' => $studentId,
-            'course_id' => $courseId,
-            'instructor_id' => $instructorId,
-            'status' => 'enrolled'
-        ]);
-    }
-
-    public function exists($studentId, $courseId)
-    {
-        return $this->db->table('enrollments')
-            ->where('student_id', $studentId)
-            ->where('course_id', $courseId)
-            ->get();
-    }
-
-    public function student_is_enrolled($studentId, $courseId)
-    {
-        return (bool) $this->db->raw(
-            "SELECT id FROM enrollments WHERE student_id = ? AND course_id = ? AND status = 'enrolled' LIMIT 1",
-            [$studentId, $courseId]
-        )->fetch(PDO::FETCH_ASSOC);
-    }
-
-    public function course_enrollment_count($courseId)
-    {
-        $result = $this->db->raw(
-            "SELECT COUNT(*) AS total FROM enrollments WHERE course_id = ? AND status = 'enrolled'",
-            [$courseId]
-        )->fetch(PDO::FETCH_ASSOC);
-        return (int) ($result['total'] ?? 0);
+        return (int) $this->db->table($this->table)
+            ->where(['course_id' => (int) $courseId, 'status' => 'enrolled'])
+            ->count();
     }
 }
