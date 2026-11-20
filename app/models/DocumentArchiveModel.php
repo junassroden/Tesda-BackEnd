@@ -1,116 +1,79 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
+/** document_archive: main office records, with the OCR text and AI labels from upload. */
 class DocumentArchiveModel extends Model
 {
-    public function __construct()
-    {
-        parent::__construct();
-    }
+    protected $table = 'document_archive';
+    protected $primary_key = 'id';
+    protected $fillable = [
+        'training_center_id', 'uploaded_by', 'storage_key', 'original_name', 'mime_type', 'file_size',
+        'file_hash', 'pages_analyzed', 'text_source', 'ocr_text', 'ocr_error', 'ocr_word_count',
+        'image_label', 'image_confidence', 'text_label', 'category', 'status', 'access_level', 'expires_at',
+    ];
 
-    public function central_office()
+    /** Document columns plus the uploader's name. */
+    private function with_uploader()
     {
-        return $this->db->raw(
-            'SELECT id FROM training_centers
-             WHERE center_code = ? AND is_active = 1
-             LIMIT 1',
-            ['TESDA-MAIN']
-        )->fetch(PDO::FETCH_ASSOC);
-    }
-
-    public function create($document)
-    {
-        $this->db->raw(
-            'INSERT INTO document_archive
-                (training_center_id, uploaded_by, storage_key, original_name,
-                 mime_type, file_size, ocr_text, ocr_error, image_label, text_label)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [
-                $document['training_center_id'],
-                $document['uploaded_by'],
-                $document['storage_key'],
-                $document['original_name'],
-                $document['mime_type'],
-                $document['file_size'],
-                $document['ocr_text'],
-                $document['ocr_error'],
-                $document['image_label'],
-                $document['text_label']
-            ]
-        );
+        return $this->db->table('document_archive d')
+            ->select('d.id, d.original_name, d.mime_type, d.file_size, d.ocr_text, d.ocr_error,
+                      d.image_label, d.text_label, d.created_at, u.full_name AS uploader_name')
+            ->left_join('users u', 'u.id = d.uploaded_by');
     }
 
     public function recent($centerId, $limit = 25)
     {
-        return $this->db->raw(
-            'SELECT d.id, d.original_name, d.mime_type, d.file_size, d.ocr_text,
-                    d.ocr_error, d.image_label, d.text_label, d.created_at,
-                    u.full_name AS uploader_name
-             FROM document_archive d
-             LEFT JOIN users u ON u.id = d.uploaded_by
-             WHERE d.training_center_id = ?
-             ORDER BY d.created_at DESC, d.id DESC
-             LIMIT ' . (int) $limit,
-            [(int) $centerId]
-        )->fetchAll(PDO::FETCH_ASSOC);
+        return $this->with_uploader()
+            ->where('d.training_center_id', (int) $centerId)
+            ->order_by('d.created_at', 'DESC')
+            ->limit((int) $limit)
+            ->get_all();
     }
 
-    public function search($centerId, $terms, $limit = 25)
+    /** Documents whose name, OCR text, AI labels, or uploader match any of the terms. */
+    public function search($centerId, array $terms, $limit = 25)
     {
-        $conditions = [];
-        $arguments = [(int) $centerId];
-        foreach ($terms as $term) {
-            $conditions[] = '(d.original_name LIKE ? OR d.ocr_text LIKE ?
-                OR d.image_label LIKE ? OR d.text_label LIKE ?
-                OR u.full_name LIKE ? OR u.username LIKE ?)';
-            $pattern = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term) . '%';
-            array_push($arguments, $pattern, $pattern, $pattern, $pattern, $pattern, $pattern);
-        }
-
-        return $this->db->raw(
-            'SELECT d.id, d.original_name, d.mime_type, d.file_size, d.ocr_text,
-                    d.ocr_error, d.image_label, d.text_label, d.created_at,
-                    u.full_name AS uploader_name
-             FROM document_archive d
-             LEFT JOIN users u ON u.id = d.uploaded_by
-             WHERE d.training_center_id = ? AND (' . implode(' OR ', $conditions) . ')
-             ORDER BY d.created_at DESC, d.id DESC
-             LIMIT ' . (int) $limit,
-            $arguments
-        )->fetchAll(PDO::FETCH_ASSOC);
+        $fields = ['d.original_name', 'd.ocr_text', 'd.image_label', 'd.text_label', 'u.full_name', 'u.username'];
+        return $this->with_uploader()
+            ->where('d.training_center_id', (int) $centerId)
+            ->grouped(function ($q) use ($terms, $fields) {
+                $first = true;
+                foreach ($terms as $term) {
+                    $pattern = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term) . '%';
+                    foreach ($fields as $field) {
+                        $first ? $q->like($field, $pattern) : $q->or_like($field, $pattern);
+                        $first = false;
+                    }
+                }
+            })
+            ->order_by('d.created_at', 'DESC')
+            ->limit((int) $limit)
+            ->get_all();
     }
 
-    public function find($id, $centerId)
+    /** The document, if it belongs to the center. */
+    public function in_center($id, $centerId)
     {
-        return $this->db->raw(
-            'SELECT id, storage_key, original_name, mime_type, training_center_id
-             FROM document_archive
-             WHERE id = ? AND training_center_id = ?
-             LIMIT 1',
-            [(int) $id, (int) $centerId]
-        )->fetch(PDO::FETCH_ASSOC);
+        return $this->query()
+            ->select('id, storage_key, original_name, mime_type, training_center_id')
+            ->where(['id' => (int) $id, 'training_center_id' => (int) $centerId])
+            ->get();
     }
 
+    /** The center's only document, or null when it has none or several. */
     public function single_document($centerId)
     {
-        $documents = $this->db->raw(
-            'SELECT id, original_name
-             FROM document_archive
-             WHERE training_center_id = ?
-             ORDER BY created_at DESC, id DESC
-             LIMIT 2',
-            [(int) $centerId]
-        )->fetchAll(PDO::FETCH_ASSOC);
-
+        $documents = $this->query()
+            ->select('id, original_name')
+            ->where('training_center_id', (int) $centerId)
+            ->order_by('created_at', 'DESC')
+            ->limit(2)
+            ->get_all();
         return count($documents) === 1 ? $documents[0] : null;
     }
 
-    public function count($centerId)
+    public function count_for_center($centerId)
     {
-        $result = $this->db->raw(
-            'SELECT COUNT(*) AS total FROM document_archive WHERE training_center_id = ?',
-            [(int) $centerId]
-        )->fetch(PDO::FETCH_ASSOC);
-        return (int) ($result['total'] ?? 0);
+        return (int) $this->db->table($this->table)->where('training_center_id', (int) $centerId)->count();
     }
 }
