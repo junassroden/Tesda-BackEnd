@@ -18,6 +18,7 @@ $router->group(['prefix' => '/api/app'], function ($router) {
 
     // Instructors
     $router->get('/instructor', 'InstructorController::index');
+    $router->get('/instructor/batches', 'InstructorController::batches');
     $router->post('/instructor/enroll', 'InstructorController::enroll');
     $router->put('/instructor/courses/{id}', 'CourseController::update_delivery_details');
     $router->post('/instructor/courses/{id}/materials', 'CourseController::add_material');
@@ -40,6 +41,9 @@ $router->group(['prefix' => '/api/app'], function ($router) {
     $router->get('/products/{id}', 'ProductController::show');
     $router->put('/products/{id}', 'ProductController::update');
     $router->delete('/products/{id}', 'ProductController::delete');
+    $router->get('/products/{id}/image', 'ProductController::image');
+    $router->post('/products/{id}/image', 'ProductController::upload_image');
+    $router->delete('/products/{id}/image', 'ProductController::delete_image');
 
     // Supply requests (learning center -> main office)
     $router->get('/inventory-requests', 'InventoryRequestController::index');
@@ -75,4 +79,7 @@ $router->group(['prefix' => '/api/app'], function ($router) {
     $router->post('/documents/chat', 'DocumentArchiveController::chat');
     $router->delete('/documents/chat', 'DocumentArchiveController::clear_chat');
     $router->get('/documents/{id}/download', 'DocumentArchiveController::download');
+    $router->get('/documents/{id}/view', 'DocumentArchiveController::view');
+    $router->put('/documents/{id}', 'DocumentArchiveController::rename');
+    $router->delete('/documents/{id}', 'DocumentArchiveController::delete');
 });
