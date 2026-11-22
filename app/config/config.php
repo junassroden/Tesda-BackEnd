@@ -64,7 +64,7 @@ $config['version']                 = '4.6.0';
 | -------------------------------------------------------------------
 | Values: development and production
 */
-$config['environment'] = getenv('APP_ENV') ?: 'development';
+$config['environment'] = ($_ENV['APP_ENV'] ?? getenv('APP_ENV')) ?: 'development';
 
 /*
 |--------------------------------------------------------------------------
@@ -115,7 +115,8 @@ $config['index_page']               = '';
 |
 */
 $config['log_threshold']            = 0;
-$config['log_dir']                  = 'runtime/logs/';
+// Absolute, so logs stay in the private runtime folder (a relative path lands under public/).
+$config['log_dir']                  = ROOT_DIR . 'runtime/logs/';
 
 /*
 |--------------------------------------------------------------------------
@@ -249,7 +250,7 @@ $config['creation_window']         = 60;
 $config['lock_duration_creation']  = 120;
 $config['security_file']           = ROOT_DIR . 'runtime/session/session_security.json';
 $config['sess_inactivity_timeout'] = 1800;
-$config['session_hmac_secret']     = getenv('APP_KEY') ?: '';
+$config['session_hmac_secret']     = ($_ENV['APP_KEY'] ?? getenv('APP_KEY')) ?: '';
 
 /*
 |--------------------------------------------------------------------------
@@ -298,7 +299,7 @@ $config['cache_default_expires']   = 0;
 |
 |
 */
-$config['encryption_key']           = getenv('APP_KEY') ?: '';
+$config['encryption_key']           = ($_ENV['APP_KEY'] ?? getenv('APP_KEY')) ?: '';
 
 /*
 |--------------------------------------------------------------------------
