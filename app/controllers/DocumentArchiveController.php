@@ -88,6 +88,17 @@ class DocumentArchiveController extends SpaController
 
     public function download($id)
     {
+        $this->send_file((int) $id, false);
+    }
+
+    /** GET /documents/{id}/view: the file shown in the browser (PDF viewer or image). */
+    public function view($id)
+    {
+        $this->send_file((int) $id, true);
+    }
+
+    private function send_file($id, $inline)
+    {
         $document = $this->DocumentArchiveModel->in_center((int) $id, $this->archive_center_id());
         if (!$document) {
             $this->json_error('Document not found.', 404);
@@ -108,18 +119,76 @@ class DocumentArchiveController extends SpaController
 
         $file = new finfo(FILEINFO_MIME_TYPE);
         $mimeType = $file->file($realPath) ?: 'application/octet-stream';
+        // Only types the browser renders itself are shown inline; anything else downloads.
+        $viewable = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/bmp'];
+        $disposition = $inline && in_array($mimeType, $viewable, true) ? 'inline' : 'attachment';
         $downloadName = preg_replace('/[\r\n"\\\\]/', '_', basename($document['original_name']));
         $this->io->set_status_code(200);
         $this->io->add_header([
             'Content-Type' => $mimeType,
             'Content-Length' => (string) filesize($realPath),
-            'Content-Disposition' => 'attachment; filename="' . $downloadName . '"; filename*=UTF-8\'\'' . rawurlencode($document['original_name']),
+            'Content-Disposition' => $disposition . '; filename="' . $downloadName . '"; filename*=UTF-8\'\'' . rawurlencode($document['original_name']),
             'X-Content-Type-Options' => 'nosniff',
             'Cache-Control' => 'private, no-store',
         ], null);
         $this->io->send(); // headers only; the file is streamed below
         readfile($realPath);
         exit;
+    }
+
+    /** PUT /documents/{id}: renames the document. The file extension always stays the same. */
+    public function rename($id)
+    {
+        $document = $this->DocumentArchiveModel->in_center((int) $id, $this->archive_center_id());
+        if (!$document) {
+            $this->json_error('Document not found.', 404);
+        }
+
+        // Characters that are not allowed in Windows file names, and control characters.
+        $name = preg_replace('#[\x00-\x1F\x7F\\\\/:*?"<>|]+#u', ' ', $this->str($this->input(), 'name'));
+        $name = trim(preg_replace('/\s+/u', ' ', (string) $name), " .");
+        $extension = pathinfo($document['original_name'], PATHINFO_EXTENSION);
+        if ($extension !== '' && preg_match('/\.' . preg_quote($extension, '/') . '$/i', $name)) {
+            $name = trim(substr($name, 0, -strlen($extension) - 1), " .");
+        }
+        if ($name === '') {
+            $this->json_error('Enter a name for the document.', 422);
+        }
+        $fullName = mb_substr($name, 0, 240, 'UTF-8') . ($extension !== '' ? '.' . $extension : '');
+
+        $this->DocumentArchiveModel->update((int) $document['id'], ['original_name' => $fullName]);
+        $this->json(['message' => 'Document renamed.', 'original_name' => $fullName]);
+    }
+
+    /** DELETE /documents/{id}: removes the archive record and its stored file. */
+    public function delete($id)
+    {
+        $document = $this->DocumentArchiveModel->in_center((int) $id, $this->archive_center_id());
+        if (!$document) {
+            $this->json_error('Document not found.', 404);
+        }
+
+        try {
+            $this->DocumentArchiveModel->delete((int) $document['id']);
+        } catch (Throwable $error) {
+            error_log('Document archive delete failed: ' . $error->getMessage());
+            $this->json_error('The document could not be deleted.', 500);
+        }
+
+        $path = $this->archiveDirectory . DIRECTORY_SEPARATOR . basename($document['storage_key']);
+        if (is_file($path) && !unlink($path)) {
+            error_log('Could not remove a deleted document archive file: ' . $document['storage_key']);
+        }
+
+        $remembered = $this->session->userdata('document_chat_document_ids');
+        if (is_array($remembered)) {
+            $this->session->set_userdata(
+                'document_chat_document_ids',
+                array_values(array_filter($remembered, fn ($rememberedId) => (int) $rememberedId !== (int) $document['id']))
+            );
+        }
+
+        $this->json(['message' => 'Document deleted.']);
     }
 
     private function process_upload($upload, $centerId)
