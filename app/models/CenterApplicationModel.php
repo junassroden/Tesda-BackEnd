@@ -11,7 +11,7 @@ class CenterApplicationModel extends Model
     /** 'pending', 'approved', 'rejected', or null when the user never applied. */
     public function status_for_user($userId)
     {
-        $row = $this->query()
+        $row = $this->db->table($this->table)
             ->select('status')
             ->where('user_id', (int) $userId)
             ->order_by('id', 'DESC')
