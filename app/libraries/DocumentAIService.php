@@ -34,7 +34,7 @@ class DocumentAIService
      */
     public static function ai_dir()
     {
-        $configured = getenv('DOCUMENT_AI_DIR');
+        $configured = ($_ENV['DOCUMENT_AI_DIR'] ?? getenv('DOCUMENT_AI_DIR'));
         if ($configured !== false && trim($configured) !== '') {
             return rtrim(trim($configured), '\\/') . DIRECTORY_SEPARATOR;
         }
@@ -102,7 +102,7 @@ class DocumentAIService
 
     private function python_executable()
     {
-        $configured = getenv('DOCUMENT_AI_PYTHON');
+        $configured = ($_ENV['DOCUMENT_AI_PYTHON'] ?? getenv('DOCUMENT_AI_PYTHON'));
         if ($configured !== false && trim($configured) !== '') {
             return trim($configured);
         }
