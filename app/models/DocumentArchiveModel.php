@@ -54,7 +54,7 @@ class DocumentArchiveModel extends Model
     /** The document, if it belongs to the center. */
     public function in_center($id, $centerId)
     {
-        return $this->query()
+        return $this->db->table($this->table)
             ->select('id, storage_key, original_name, mime_type, training_center_id')
             ->where(['id' => (int) $id, 'training_center_id' => (int) $centerId])
             ->get();
@@ -63,7 +63,7 @@ class DocumentArchiveModel extends Model
     /** The center's only document, or null when it has none or several. */
     public function single_document($centerId)
     {
-        $documents = $this->query()
+        $documents = $this->db->table($this->table)
             ->select('id, original_name')
             ->where('training_center_id', (int) $centerId)
             ->order_by('created_at', 'DESC')
