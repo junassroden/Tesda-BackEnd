@@ -45,7 +45,7 @@ class TrainingCenterModel extends Model
         $users = $this->counts_by_center('users');
         $courses = $this->counts_by_center('courses');
 
-        $centers = $this->query()->order_by('name', 'ASC')->get_all();
+        $centers = $this->db->table($this->table)->order_by('name', 'ASC')->get_all();
         foreach ($centers as &$center) {
             $center['user_count'] = $users[$center['id']] ?? 0;
             $center['course_count'] = $courses[$center['id']] ?? 0;
