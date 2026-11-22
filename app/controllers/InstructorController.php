@@ -28,6 +28,13 @@ class InstructorController extends SpaController
         ]);
     }
 
+    /** GET /instructor/batches : the batches this teacher handles. */
+    public function batches()
+    {
+        $this->call->model('BatchModel');
+        $this->json(['batches' => $this->BatchModel->by_instructor($this->user_id(), $this->center_id())]);
+    }
+
     /** POST /instructor/enroll  { student_id, course_id } */
     public function enroll()
     {
