@@ -43,6 +43,20 @@ class BatchModel extends Model
         return $batches;
     }
 
+    /** Batches a teacher handles at their center: ongoing first, then upcoming, then the rest. */
+    public function by_instructor($instructorId, $centerId)
+    {
+        $batches = $this->attach_enrolled($this->with_names()
+            ->where('b.instructor_id', (int) $instructorId)
+            ->where('c.training_center_id', (int) $centerId)
+            ->order_by('b.start_date', 'ASC')
+            ->get_all());
+
+        $rank = ['ongoing' => 0, 'upcoming' => 1, 'completed' => 2, 'cancelled' => 3];
+        usort($batches, fn ($a, $b) => ($rank[$a['status']] ?? 9) <=> ($rank[$b['status']] ?? 9));
+        return $batches;
+    }
+
     /** One batch, optionally only if it belongs to the center. */
     public function detail($batchId, $centerId = null)
     {
