@@ -60,7 +60,7 @@ class AllowanceModel extends Model
     /** The batch's open request code, if it has one (pending through approved). */
     public function open_request_for_batch($batchId)
     {
-        $row = $this->query()
+        $row = $this->db->table($this->table)
             ->select('request_code')
             ->where('batch_id', (int) $batchId)
             ->not_in('status', ['rejected', 'released'])
