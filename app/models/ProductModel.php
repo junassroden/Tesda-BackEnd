@@ -13,7 +13,44 @@ class ProductModel extends Model
 
     public function listing()
     {
-        return $this->query()->order_by('product_name', 'ASC')->get_all();
+        return $this->db->table($this->table)
+            ->order_by('product_name', 'ASC')
+            ->get_all();
+    }
+
+    /** Latest stock movements for an item, with the center, request and who recorded them. */
+    public function movements($id, $limit = 8)
+    {
+        return $this->db->table('stock_movements m')
+            ->select('m.id, m.movement_type, m.quantity_change, m.remarks, m.created_at,
+                      c.name AS center_name, r.request_code, u.full_name AS recorded_by_name')
+            ->left_join('training_centers c', 'c.id = m.training_center_id')
+            ->left_join('inventory_requests r', 'r.id = m.request_id')
+            ->left_join('users u', 'u.id = m.recorded_by')
+            ->where('m.product_id', (int) $id)
+            ->order_by('m.created_at', 'DESC')
+            ->limit(max(1, (int) $limit))
+            ->get_all();
+    }
+
+    /** Units asked for by requests that are still open (not yet released, rejected or cancelled). */
+    public function reserved($id)
+    {
+        $rows = $this->db->table('inventory_request_items i')
+            ->select('i.request_id, i.quantity_requested, i.quantity_approved')
+            ->inner_join('inventory_requests r', 'r.id = i.request_id')
+            ->where('i.product_id', (int) $id)
+            ->in('r.status', ['pending', 'in_review', 'approved'])
+            ->get_all();
+
+        $units = 0;
+        foreach ($rows as $row) {
+            $units += (int) ($row['quantity_approved'] ?? $row['quantity_requested']);
+        }
+        return [
+            'units' => $units,
+            'requests' => count(array_unique(array_column($rows, 'request_id'))),
+        ];
     }
 
     public function name_taken($name, $exceptId = 0)
