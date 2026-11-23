@@ -62,6 +62,18 @@ class AuditModel extends Model
         return $blockHash;
     }
 
+    /** The audit trail of one record (e.g. a batch's status changes), newest first. */
+    public function for_entity($entityType, $entityId, $limit = 50)
+    {
+        return $this->db->table('activity_logs a')
+            ->select('a.id, a.action, a.description, a.created_at, u.full_name AS user_name')
+            ->left_join('users u', 'u.id = a.user_id')
+            ->where(['a.entity_type' => $entityType, 'a.entity_id' => (int) $entityId])
+            ->order_by('a.id', 'DESC')
+            ->limit((int) $limit)
+            ->get_all();
+    }
+
     /** Recent activity for the dashboard: everything, or one center's. */
     public function recent($centerId = null, $limit = 6)
     {
