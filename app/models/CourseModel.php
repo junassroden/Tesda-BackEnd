@@ -8,7 +8,8 @@ class CourseModel extends Model
     protected $primary_key = 'id';
     protected $fillable = [
         'training_center_id', 'course_code', 'course_name', 'qualification', 'description',
-        'class_days', 'class_schedule', 'course_outline', 'duration_hours', 'capacity', 'status',
+        'class_days', 'class_schedule', 'course_outline', 'duration_hours', 'training_days', 'duration_value',
+        'duration_unit', 'training_mode', 'capacity', 'status',
     ];
 
     /** Course columns plus the center's name and location. */
@@ -16,7 +17,8 @@ class CourseModel extends Model
     {
         return $this->db->table('courses c')
             ->select('c.id, c.training_center_id, c.course_code, c.course_name, c.qualification, c.description,
-                      c.class_days, c.class_schedule, c.course_outline, c.duration_hours, c.capacity, c.status, c.created_at,
+                      c.class_days, c.class_schedule, c.course_outline, c.duration_hours, c.training_days, c.duration_value,
+                      c.duration_unit, c.training_mode, c.capacity, c.status, c.created_at,
                       tc.name AS training_center_name, tc.region, tc.province, tc.city, tc.address')
             ->inner_join('training_centers tc', 'tc.id = c.training_center_id');
     }
@@ -78,8 +80,22 @@ class CourseModel extends Model
             ->group_by('course_id')
             ->get_all();
         $counts = array_column($rows, 'total', 'course_id');
+
+        // Active (upcoming, ongoing, suspended) and history (completed, cancelled) batch counts.
+        $batchRows = $this->db->raw(
+            "SELECT course_id,
+                    SUM(status IN ('upcoming', 'ongoing', 'suspended')) AS active_batches,
+                    SUM(status IN ('completed', 'cancelled')) AS history_batches,
+                    SUM(status = 'ongoing' AND end_date IS NOT NULL AND end_date < CURDATE()) AS review_batches
+               FROM batches WHERE course_id IN (" . implode(',', array_map('intval', array_column($courses, 'id'))) . ")
+              GROUP BY course_id"
+        )->fetchAll(PDO::FETCH_ASSOC);
+        $batches = array_column($batchRows, null, 'course_id');
         foreach ($courses as &$course) {
             $course['enrollment_count'] = (int) ($counts[$course['id']] ?? 0);
+            $course['active_batches'] = (int) ($batches[$course['id']]['active_batches'] ?? 0);
+            $course['history_batches'] = (int) ($batches[$course['id']]['history_batches'] ?? 0);
+            $course['review_batches'] = (int) ($batches[$course['id']]['review_batches'] ?? 0);
         }
         return $courses;
     }
