@@ -135,6 +135,10 @@ class CourseController extends SpaController
     {
         $this->require_staff_admin();
         $this->manageable_course((int) $id);
+        // Batches cascade with their course, so a course with any batch keeps its history by being archived instead.
+        if ($this->db->table('batches')->where('course_id', (int) $id)->count() > 0) {
+            $this->json_error('This course has batches on record. Archive it instead so its history is kept.', 409);
+        }
         $this->CourseModel->delete((int) $id);
         $this->json(['message' => 'Course deleted successfully.']);
     }
@@ -147,13 +151,25 @@ class CourseController extends SpaController
             'qualification|Qualification' => 'required|min_length[2]|max_length[30]|alpha_numeric_space',
             'description|Description' => 'max_length[10000]',
             'capacity|Capacity' => 'required|numeric|greater_than_equal_to[1]|less_than_equal_to[10000]',
-            'status|Status' => 'required|in_list[open,closed]',
+            'status|Status' => 'required|in_list[open,closed,archived]',
             'class_days|Class days' => 'max_length[150]',
             'class_schedule|Schedule' => 'max_length[10000]',
             'course_outline|Course outline' => 'max_length[20000]',
+            'duration_hours|Total training hours' => 'numeric|greater_than_equal_to[1]|less_than_equal_to[5000]',
+            'training_days|Estimated training days' => 'numeric|greater_than_equal_to[1]|less_than_equal_to[1000]',
+            'duration_value|Estimated duration' => 'numeric|greater_than_equal_to[1]|less_than_equal_to[120]',
         ]);
 
         $input = $this->input();
+        $unit = $this->str($input, 'duration_unit') ?: 'weeks';
+        $mode = $this->str($input, 'training_mode') ?: 'face_to_face';
+        if (!in_array($unit, ['weeks', 'months'], true)) {
+            $this->json_error('Choose weeks or months for the estimated duration.', 422);
+        }
+        if (!in_array($mode, ['face_to_face', 'online', 'hybrid'], true)) {
+            $this->json_error('Choose face-to-face, online or hybrid.', 422);
+        }
+        $int = fn ($key) => $this->str($input, $key) !== '' ? (int) $input[$key] : null;
         $centerId = $this->is_center_admin() ? $this->center_id() : (int) ($input['training_center_id'] ?? 0);
         if (!$this->TrainingCenterModel->find_active($centerId)) {
             $this->json_error('Select an active training center.', 422);
@@ -174,13 +190,23 @@ class CourseController extends SpaController
             'class_days' => $this->str($input, 'class_days'),
             'class_schedule' => $this->str($input, 'class_schedule'),
             'course_outline' => $this->str($input, 'course_outline'),
+            'duration_hours' => $int('duration_hours'),
+            'training_days' => $int('training_days'),
+            'duration_value' => $int('duration_value'),
+            'duration_unit' => $unit,
+            'training_mode' => $mode,
         ];
         if ($id === null) {
-            $this->CourseModel->insert($course);
+            $id = (int) $this->CourseModel->insert($course);
+            $created = true;
         } else {
             $this->CourseModel->update($id, $course);
+            $created = false;
         }
-        $this->json(['message' => 'Course saved successfully.'], $id === null ? 201 : 200);
+        $this->call->model('AuditModel');
+        $this->AuditModel->log($this->user_id(), $centerId, $created ? 'created' : 'updated', 'course', $id,
+            ($created ? 'Created course ' : 'Updated course ') . "{$code} {$course['course_name']}");
+        $this->json(['message' => 'Course saved successfully.', 'course' => $this->CourseModel->detail($id)], $created ? 201 : 200);
     }
 
     private function require_staff_admin()
