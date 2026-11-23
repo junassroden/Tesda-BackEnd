@@ -35,9 +35,14 @@ class InstructorController extends SpaController
         $this->json(['batches' => $this->BatchModel->by_instructor($this->user_id(), $this->center_id())]);
     }
 
-    /** POST /instructor/enroll  { student_id, course_id } */
+    /**
+     * POST /instructor/enroll  { student_id, course_id }
+     * Enrollment now happens per batch by the learning center administrator
+     * (POST /batches/{id}/students), which also opens classroom access.
+     */
     public function enroll()
     {
+        $this->json_error('Students are enrolled in batches by the learning center administrator.', 403);
         $this->validate([
             'student_id|Student' => 'required|numeric',
             'course_id|Course' => 'required|numeric',
