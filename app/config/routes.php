@@ -13,8 +13,11 @@ $router->group(['prefix' => '/api/app'], function ($router) {
 
     // Students
     $router->get('/student/courses', 'StudentController::courses');
+    $router->get('/student/training', 'StudentController::training');
     $router->get('/student/profile', 'StudentController::profile');
     $router->put('/student/profile', 'StudentController::update_profile');
+    $router->get('/student/documents', 'StudentDocumentController::mine');
+    $router->post('/student/documents/{typeId}', 'StudentDocumentController::upload_mine');
 
     // Instructors
     $router->get('/instructor', 'InstructorController::index');
@@ -58,11 +61,46 @@ $router->group(['prefix' => '/api/app'], function ($router) {
     $router->get('/allowance-requests/{id}', 'AllowanceController::show');
     $router->put('/allowance-requests/{id}/students/{studentId}', 'AllowanceController::check_student');
     $router->post('/allowance-requests/{id}/status', 'AllowanceController::set_status');
-    // Batches, trainees, delivery personnel
+    // Batches: schedule, lifecycle, trainees, attendance, history
     $router->get('/batches', 'BatchController::center_batches');
+    $router->get('/batches/history', 'BatchController::history');
     $router->get('/courses/{id}/batches', 'BatchController::index');
     $router->post('/courses/{id}/batches', 'BatchController::create');
+    $router->get('/batches/{id}', 'BatchController::show');
+    $router->put('/batches/{id}', 'BatchController::update');
+    $router->put('/batches/{id}/instructor', 'BatchController::assign_instructor');
+    $router->post('/batches/{id}/status', 'BatchController::change_status');
     $router->get('/batches/{id}/students', 'BatchController::students');
+    $router->post('/batches/{id}/students', 'BatchController::enroll');
+    $router->post('/batches/{id}/students/{studentId}/remove', 'BatchController::remove_student');
+    $router->post('/batches/{id}/students/{studentId}/transfer', 'BatchController::transfer_student');
+    $router->post('/batches/{id}/sessions', 'BatchController::record_session');
+    $router->delete('/batches/{id}/sessions/{sessionId}', 'BatchController::delete_session');
+    $router->get('/center/instructors', 'BatchController::instructors');
+
+    // Student records and enrollment documents (learning center)
+    $router->get('/center/students', 'StudentRecordController::index');
+    $router->post('/center/students', 'StudentRecordController::create');
+    $router->get('/center/students/{id}', 'StudentRecordController::show');
+    $router->put('/center/students/{id}', 'StudentRecordController::update');
+    $router->post('/center/students/{id}/documents/{typeId}', 'StudentDocumentController::upload_for');
+    $router->post('/student-documents/{id}/review', 'StudentDocumentController::review');
+    $router->get('/student-document-files/{id}', 'StudentDocumentController::file');
+    $router->delete('/student-document-files/{id}', 'StudentDocumentController::remove_file');
+
+    // Virtual classroom (one per batch; teachers and students)
+    $router->get('/classrooms', 'ClassroomController::index');
+    $router->get('/classrooms/{id}', 'ClassroomController::show');
+    $router->post('/classrooms/{id}/announcements', 'ClassroomController::announce');
+    $router->delete('/classrooms/{id}/announcements/{announcementId}', 'ClassroomController::delete_announcement');
+    $router->post('/classrooms/{id}/items', 'ClassroomController::create_item');
+    $router->delete('/classroom-items/{id}', 'ClassroomController::delete_item');
+    $router->get('/classroom-items/{id}/submissions', 'ClassroomController::submissions');
+    $router->post('/classroom-items/{id}/submission', 'ClassroomController::submit');
+    $router->post('/classroom-submissions/{id}/grade', 'ClassroomController::grade');
+    $router->get('/classroom-files/{id}', 'ClassroomController::file');
+    $router->delete('/classroom-files/{id}', 'ClassroomController::delete_file');
+
     $router->get('/delivery-personnel', 'BatchController::delivery');
     $router->post('/delivery-personnel', 'BatchController::add_delivery');
     // Dashboard numbers
