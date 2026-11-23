@@ -19,7 +19,22 @@ class SummaryController extends SpaController
     public function index()
     {
         $scope = $this->center_scope();
+        if ($scope) {
+            $this->BatchModel->sweep();
+        }
+        $batches = $scope ? $this->BatchModel->by_center($scope) : [];
+        $training = null;
+        if ($scope) {
+            $this->call->model('StudentDocumentModel');
+            $training = [
+                'needs_review' => count(array_filter($batches, fn ($b) => $b['needs_review'])),
+                'suspended' => count(array_filter($batches, fn ($b) => $b['status'] === 'suspended')),
+                'ongoing' => count(array_filter($batches, fn ($b) => $b['status'] === 'ongoing')),
+                'pending_documents' => $this->StudentDocumentModel->pending_count($scope),
+            ];
+        }
         $this->json([
+            'training' => $training,
             'inventory_requests' => [
                 'by_status' => $this->InventoryRequestModel->status_counts($scope),
                 'recent' => $this->InventoryRequestModel->listing($scope, 4),
@@ -28,7 +43,7 @@ class SummaryController extends SpaController
                 'by_status' => $this->AllowanceModel->status_totals($scope),
                 'recent' => $this->AllowanceModel->listing($scope, 4),
             ],
-            'batches' => $scope ? $this->BatchModel->by_center($scope) : [],
+            'batches' => $batches,
             'activity' => $this->AuditModel->recent($scope, 6),
         ]);
     }
