@@ -28,6 +28,7 @@ class BatchLifecycleCommand
         if (!defined('PREVENT_DIRECT_ACCESS')) {
             define('PREVENT_DIRECT_ACCESS', true);
         }
+        require_once APP_DIR . 'libraries' . DIRECTORY_SEPARATOR . 'Ledger.php';
         require_once APP_DIR . 'libraries' . DIRECTORY_SEPARATOR . 'BatchLifecycle.php';
         date_default_timezone_set('Asia/Manila');
 
