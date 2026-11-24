@@ -55,7 +55,7 @@ class DocumentArchiveModel extends Model
     public function in_center($id, $centerId)
     {
         return $this->db->table($this->table)
-            ->select('id, storage_key, original_name, mime_type, training_center_id')
+            ->select('id, storage_key, original_name, mime_type, training_center_id, file_hash')
             ->where(['id' => (int) $id, 'training_center_id' => (int) $centerId])
             ->get();
     }
