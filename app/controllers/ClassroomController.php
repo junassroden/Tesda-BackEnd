@@ -1,9 +1,6 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/SpaController.php';
-require_once APP_DIR . 'libraries/FileStore.php';
-
 /**
  * Virtual classroom, one per batch (see ClassroomModel).
  *   Teacher (the batch's assigned instructor): posts announcements, shares
@@ -12,12 +9,13 @@ require_once APP_DIR . 'libraries/FileStore.php';
  *   Completed batches stay readable; nothing can be posted or turned in.
  * Every request re-checks membership on the server.
  */
-class ClassroomController extends SpaController
+class ClassroomController extends MY_Controller
 {
     public function __construct()
     {
         parent::__construct();
         $this->require_role(['instructor', 'student'], 'The virtual classroom is for teachers and students.');
+        $this->call->library('FileStore');
         $this->call->model('BatchModel');
         $this->call->model('ClassroomModel');
         $this->call->model('AuditModel');
