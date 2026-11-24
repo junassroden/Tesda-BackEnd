@@ -1,8 +1,6 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/FileStore.php';
-
 /**
  * Student enrollment documents, kept per student AND learning center
  * (never per course), so a student's verified documents are reused for every
@@ -25,6 +23,12 @@ class StudentDocumentModel extends Model
         'training_center_id', 'student_id', 'requirement_type_id', 'status', 'remarks', 'submitted_at',
         'uploaded_by', 'verified_by', 'verified_at',
     ];
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->call->library('FileStore'); // LavaLust loader (app/libraries/FileStore.php)
+    }
 
     /** Active requirement types in checklist order. */
     public function types()
@@ -117,6 +121,13 @@ class StudentDocumentModel extends Model
             }
         }
         $summary['complete'] = $summary['required'] > 0 && $summary['verified'] === $summary['required'];
+
+        // Ledger status of each document that was ever verified.
+        $this->call->model('LedgerModel');
+        foreach ($items as &$item) {
+            $item['ledger'] = $item['document_id'] ? $this->LedgerModel->entity_status('student_document', $item['document_id']) : ['state' => 'none', 'blocks' => []];
+        }
+        unset($item);
         return ['items' => $items, 'summary' => $summary];
     }
 
@@ -339,7 +350,7 @@ class StudentDocumentModel extends Model
     /**
      * Administrator review: action is under_review, verified or rejected.
      * Verification needs all required copies; rejection needs remarks.
-     * Verifications are also chained in the blockchain ledger.
+     * Verifications are also recorded on the blockchain ledger.
      */
     public function review(array $doc, $action, $remarks, $userId)
     {
@@ -377,11 +388,7 @@ class StudentDocumentModel extends Model
             $this->log_review($doc['id'], $action, $from, $action, $remarks, $userId);
             if ($action === 'verified') {
                 $this->call->model('AuditModel');
-                $this->AuditModel->chain('student_document', (int) $doc['id'], 'verified', [
-                    'student_id' => (int) $doc['student_id'],
-                    'requirement_type_id' => (int) $doc['requirement_type_id'],
-                    'files' => array_column($files, 'file_hash'),
-                ], $userId);
+                $this->AuditModel->record('student_document', (int) $doc['id'], 'verified', $userId);
             }
             $this->db->commit();
         } catch (Throwable $e) {
