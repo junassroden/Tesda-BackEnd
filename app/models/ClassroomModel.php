@@ -1,8 +1,6 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/FileStore.php';
-
 /**
  * The virtual classroom of a batch: Stream (announcements), Classwork
  * (classroom_items: materials and assignments), People and Grades
@@ -18,6 +16,12 @@ class ClassroomModel extends Model
     protected $table = 'classroom_items';
     protected $primary_key = 'id';
     protected $fillable = ['batch_id', 'item_type', 'topic', 'title', 'instructions', 'link_url', 'due_at', 'max_points', 'created_by'];
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->call->library('FileStore'); // LavaLust loader (app/libraries/FileStore.php)
+    }
 
     /**
      * What the user may do in a batch's classroom, or null for no access.
