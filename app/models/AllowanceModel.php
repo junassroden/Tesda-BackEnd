@@ -157,16 +157,7 @@ class AllowanceModel extends Model
                 ->order_by('student_id', 'ASC')
                 ->get_all();
 
-            $audit->chain('allowance_request', $id, 'released', [
-                'request_code' => $request['request_code'],
-                'training_center_id' => (int) $request['training_center_id'],
-                'batch_id' => (int) $request['batch_id'],
-                'students' => array_map(fn ($r) => [
-                    'student_id' => (int) $r['student_id'],
-                    'amount' => $r['amount'],
-                    'account' => $r['bank_account_number'],
-                ], $rows),
-            ], $userId);
+            $audit->record('allowance_request', (int) $id, 'released', $userId);
 
             $this->db->commit();
         } catch (Throwable $e) {
