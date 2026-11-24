@@ -1,10 +1,7 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/DocumentAIService.php';
-require_once APP_DIR . 'libraries/SpaController.php';
-
-class DocumentArchiveController extends SpaController
+class DocumentArchiveController extends MY_Controller
 {
     private $documentAI;
     private $archiveDirectory;
@@ -14,16 +11,23 @@ class DocumentArchiveController extends SpaController
         parent::__construct();
         $this->require_archive_access();
         $this->call->model('DocumentArchiveModel');
+        $this->call->model('AuditModel');
         $this->call->model('TrainingCenterModel');
-        $this->documentAI = new DocumentAIService();
-        $this->archiveDirectory = ROOT_DIR . 'runtime' . DIRECTORY_SEPARATOR . 'document-archive';
+        $this->documentAI = $this->call->library('DocumentAIService');
+        $this->archiveDirectory = config_item('storage_dir') . 'document-archive';
     }
 
     public function index()
     {
         $centerId = $this->archive_center_id();
+        $this->call->model('LedgerModel');
+        $documents = $this->DocumentArchiveModel->recent($centerId);
+        foreach ($documents as &$document) {
+            $document['ledger'] = $this->LedgerModel->entity_status('document', (int) $document['id']);
+        }
+        unset($document);
         $this->json([
-            'documents' => $this->DocumentArchiveModel->recent($centerId),
+            'documents' => $documents,
             'total_documents' => $this->DocumentArchiveModel->count_for_center($centerId)
         ]);
     }
@@ -59,7 +63,12 @@ class DocumentArchiveController extends SpaController
         $messages = $this->chat_messages();
         $messages[] = ['role' => 'user', 'text' => $question, 'documents' => []];
         $response = $this->respond_to_chat($question, $centerId);
-        $messages[] = ['role' => 'assistant', 'text' => $response['text'], 'documents' => $response['documents']];
+        $messages[] = [
+            'role' => 'assistant',
+            'text' => $response['text'],
+            'documents' => $response['documents'],
+            'terms' => isset($response['terms']) ? $response['terms'] : []
+        ];
         $messages = array_slice($messages, -20);
         $this->session->set_userdata('document_chat_history', $messages);
         $this->json(['messages' => $messages]);
@@ -169,8 +178,18 @@ class DocumentArchiveController extends SpaController
         }
 
         try {
+            // The deletion is recorded on the blockchain ledger, so the archive block of
+            // this document reads "removed" instead of "missing".
+            $this->db->transaction();
+            $this->AuditModel->record('document', (int) $document['id'], 'deleted', $this->user_id(), [
+                'document_id' => (int) $document['id'],
+                'sha256' => $document['file_hash'] ?? null,
+                'deleted_at' => date('Y-m-d H:i:s'),
+            ]);
             $this->DocumentArchiveModel->delete((int) $document['id']);
+            $this->db->commit();
         } catch (Throwable $error) {
+            $this->db->roll_back();
             error_log('Document archive delete failed: ' . $error->getMessage());
             $this->json_error('The document could not be deleted.', 500);
         }
@@ -217,19 +236,25 @@ class DocumentArchiveController extends SpaController
             }
 
             try {
-                $this->DocumentArchiveModel->insert([
+                $this->db->transaction();
+                $documentId = (int) $this->DocumentArchiveModel->insert([
                     'training_center_id' => $centerId,
                     'uploaded_by' => $this->user_id(),
                     'storage_key' => $storageKey,
                     'original_name' => $this->safe_original_name($upload['name']),
                     'mime_type' => $upload['mime_type'],
                     'file_size' => (int) $upload['size'],
+                    'file_hash' => hash_file('sha256', $destination),
                     'ocr_text' => $analysis['ocr']['text'] ?? '',
                     'ocr_error' => $analysis['ocr']['error'] ?? null,
                     'image_label' => $analysis['image_classification']['label'] ?? null,
                     'text_label' => $analysis['text_classification']['label'] ?? null
                 ]);
+                // The stored file's SHA-256 fingerprint goes on the blockchain ledger.
+                $this->AuditModel->record('document', $documentId, 'archived', $this->user_id());
+                $this->db->commit();
             } catch (Throwable $error) {
+                $this->db->roll_back();
                 if (is_file($destination) && !unlink($destination)) {
                     error_log('Could not remove an unindexed document archive file: ' . $storageKey);
                 }
@@ -333,35 +358,150 @@ class DocumentArchiveController extends SpaController
             ];
         }
 
-        $matches = $this->DocumentArchiveModel->search($centerId, $terms);
+        // Search with word stems, so "certificates" also finds "certificate".
+        $stems = array_values(array_unique(array_map([$this, 'stem'], $terms)));
+        $matches = $this->DocumentArchiveModel->search($centerId, $stems, 100);
         if (!$matches) {
             $documents = $this->single_archive_document($centerId);
             if ($documents) {
                 return [
                     'text' => 'I could not match those words exactly, but there is one document in the archive. Could this be the one?',
-                    'documents' => $documents
+                    'documents' => $documents,
+                    'terms' => $terms
                 ];
             }
             return [
-                'text' => 'I could not find a match. Try a phrase from the filename or words printed on the document.',
-                'documents' => []
+                'text' => 'No document mentions ' . $this->quote_terms($terms) . '. Try another word from the filename or from the text printed on the document.',
+                'documents' => [],
+                'terms' => $terms
             ];
         }
 
-        $documents = [];
-        foreach (array_slice($matches, 0, 3) as $match) {
-            $documents[] = [
-                'id' => (int) $match['id'],
-                'original_name' => (string) $match['original_name']
-            ];
-        }
+        $ranked = $this->rank_matches($matches, $terms);
+        $documents = array_slice($ranked, 0, 5);
         $this->remember_documents_in_chat($documents);
 
-        return [
-            'text' => 'I found ' . count($matches) . ' matching document'
-                . (count($matches) === 1 ? ':' : 's. Here are the closest matches:'),
-            'documents' => $documents
-        ];
+        $total = count($ranked);
+        $best = count($documents[0]['matched']);
+        $wordCount = count($terms);
+        if ($wordCount === 1) {
+            $text = 'I found ' . $total . ' document' . ($total === 1 ? '' : 's') . ' that mention ' . $this->quote_terms($terms) . '.';
+        } elseif ($best === $wordCount) {
+            $complete = count(array_filter($ranked, function ($d) use ($wordCount) { return count($d['matched']) === $wordCount; }));
+            $text = $complete . ' document' . ($complete === 1 ? ' mentions' : 's mention') . ' all ' . $wordCount . ' of your words'
+                . ($total > $complete ? ', and ' . ($total - $complete) . ' more mention some of them.' : '.');
+        } else {
+            $text = 'No document mentions all ' . $wordCount . ' words. These match the most (' . $best . ' of ' . $wordCount . '):';
+        }
+        if ($total > count($documents)) {
+            $text .= ' Here are the ' . count($documents) . ' closest.';
+        }
+
+        return ['text' => $text, 'documents' => $documents, 'terms' => $terms];
+    }
+
+    /**
+     * Scores each document word by word: a word in the file name counts most, then the
+     * AI document type, then the OCR text, then the uploader. Documents that match more of
+     * the words come first; ties go to the higher score, then to the newer upload.
+     */
+    private function rank_matches(array $matches, array $terms)
+    {
+        $weights = ['name' => 5, 'label' => 3, 'text' => 2, 'uploader' => 1];
+        $ranked = [];
+        foreach ($matches as $row) {
+            $fields = [
+                'name' => mb_strtolower((string) $row['original_name'], 'UTF-8'),
+                'label' => mb_strtolower(trim($row['text_label'] . ' ' . $row['image_label']), 'UTF-8'),
+                'text' => mb_strtolower((string) $row['ocr_text'], 'UTF-8'),
+                'uploader' => mb_strtolower((string) $row['uploader_name'], 'UTF-8'),
+            ];
+            $matched = [];
+            $score = 0;
+            foreach ($terms as $term) {
+                $stem = $this->stem($term);
+                $hit = false;
+                foreach ($weights as $field => $weight) {
+                    if ($fields[$field] !== '' && mb_strpos($fields[$field], $stem, 0, 'UTF-8') !== false) {
+                        $score += $weight;
+                        $hit = true;
+                    }
+                }
+                if ($hit) {
+                    $matched[] = $term;
+                }
+            }
+            if (!$matched) {
+                continue; // matched only through a field this scoring does not read
+            }
+            $ranked[] = [
+                'id' => (int) $row['id'],
+                'original_name' => (string) $row['original_name'],
+                'mime_type' => (string) $row['mime_type'],
+                'label' => (string) ($row['text_label'] ?: $row['image_label']),
+                'created_at' => (string) $row['created_at'],
+                'matched' => $matched,
+                'snippet' => $this->snippet((string) $row['ocr_text'], $matched),
+                '_score' => $score,
+            ];
+        }
+
+        usort($ranked, function ($a, $b) {
+            return [count($b['matched']), $b['_score'], $b['created_at']] <=> [count($a['matched']), $a['_score'], $a['created_at']];
+        });
+        foreach ($ranked as &$document) {
+            unset($document['_score']);
+        }
+        unset($document);
+        return $ranked;
+    }
+
+    /** About 160 characters of OCR text around the first matched word, or '' when the text has none. */
+    private function snippet($text, array $matched)
+    {
+        $text = trim(preg_replace('/\s+/u', ' ', $text));
+        if ($text === '') {
+            return '';
+        }
+        $position = false;
+        foreach ($matched as $term) {
+            $found = mb_stripos($text, $this->stem($term), 0, 'UTF-8');
+            if ($found !== false && ($position === false || $found < $position)) {
+                $position = $found;
+            }
+        }
+        if ($position === false) {
+            return '';
+        }
+        $start = max(0, $position - 60);
+        $excerpt = mb_substr($text, $start, 160, 'UTF-8');
+        return ($start > 0 ? '…' : '') . $excerpt . ($start + 160 < mb_strlen($text, 'UTF-8') ? '…' : '');
+    }
+
+    /** A light plural stem: "certificates" -> "certificat", "batches" -> "batch", "copies" -> "cop". */
+    private function stem($word)
+    {
+        $length = strlen($word);
+        if ($length > 4 && substr($word, -3) === 'ies') {
+            return substr($word, 0, -3);
+        }
+        if ($length > 4 && preg_match('/(?:ches|shes|xes|sses)$/', $word)) {
+            return substr($word, 0, -2);
+        }
+        if ($length > 4 && substr($word, -1) === 's' && substr($word, -2) !== 'ss') {
+            return substr($word, 0, -1);
+        }
+        return $word;
+    }
+
+    private function quote_terms(array $terms)
+    {
+        $quoted = array_map(function ($t) { return '"' . $t . '"'; }, $terms);
+        if (count($quoted) === 1) {
+            return $quoted[0];
+        }
+        $last = array_pop($quoted);
+        return implode(', ', $quoted) . ' or ' . $last;
     }
 
     private function single_archive_document($centerId)
@@ -397,15 +537,24 @@ class DocumentArchiveController extends SpaController
             'please', 'retrieve', 'same', 'send', 'share', 'show', 'tell', 'the',
             'this', 'to', 'today', 'upload', 'uploaded', 'view', 'was', 'were',
             'week', 'where', 'which', 'with', 'you', 'your', 'yesterday', 'access',
-            'few', 'who', 'one', 'that', 'what'
+            'few', 'who', 'one', 'that', 'what', 'any', 'all', 'some', 'there', 'need',
+            'want', 'looking', 'search', 'an', 'or', 'by', 'at', 'be', 'do', 'does', 'has', 'had',
+            'hi', 'hello', 'hey', 'ok', 'okay', 'thanks', 'thank',
+            // Filipino / Taglish filler, e.g. "pakihanap po yung certificate"
+            'ang', 'ng', 'sa', 'mga', 'yung', 'iyong', 'ung', 'po', 'opo', 'naman', 'paki', 'pakihanap',
+            'pakibigay', 'pakisend', 'hanapin', 'hanap', 'ko', 'ako', 'akin', 'na', 'nga', 'lang',
+            'para', 'ba', 'yun', 'iyon', 'ito', 'dito', 'nasaan', 'saan', 'meron', 'may', 'pa',
+            'dokumento', 'kailangan', 'gusto', 'si', 'ni', 'kay'
         ];
-        $words = preg_split('/[^a-z0-9._-]+/i', strtolower($question), -1, PREG_SPLIT_NO_EMPTY);
+        // Split the question into words and keep every meaningful one, in order, once.
+        $words = preg_split('/[^\p{L}\p{N}._-]+/u', mb_strtolower($question, 'UTF-8'), -1, PREG_SPLIT_NO_EMPTY);
         $terms = [];
         foreach ($words as $word) {
-            if (strlen($word) > 1 && !in_array($word, $stopWords, true) && !in_array($word, $terms, true)) {
+            $word = trim($word, '._-');
+            if (mb_strlen($word, 'UTF-8') > 1 && !in_array($word, $stopWords, true) && !in_array($word, $terms, true)) {
                 $terms[] = $word;
             }
-            if (count($terms) >= 6) {
+            if (count($terms) >= 8) {
                 break;
             }
         }
