@@ -1,10 +1,7 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/DocumentAIService.php';
-require_once APP_DIR . 'libraries/SpaController.php';
-
-class DocumentAIController extends SpaController
+class DocumentAIController extends MY_Controller
 {
     private $documentAI;
 
@@ -12,7 +9,7 @@ class DocumentAIController extends SpaController
     {
         parent::__construct();
         $this->require_role('admin', 'Administrator access is required.');
-        $this->documentAI = new DocumentAIService();
+        $this->documentAI = $this->call->library('DocumentAIService');
     }
 
     public function analyze()
