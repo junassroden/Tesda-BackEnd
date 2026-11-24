@@ -2,7 +2,7 @@
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
 /**
- * Private file storage under runtime/ (denied to the web by runtime/.htaccess).
+ * Private file storage under config_item('storage_dir') (runtime/, denied to the web by runtime/.htaccess).
  * Files are saved under a random key, never their uploaded name, and are only
  * served through an authenticated controller that has already checked access.
  *
@@ -23,6 +23,28 @@ class FileStore
                 'webp' => ['image/webp'],
             ],
             'hint' => 'Use a PDF, JPG, PNG or WebP file up to 10 MB.',
+        ],
+        // Inventory request letters (uploaded instead of written in the app).
+        'inventory_letter' => [
+            'dir' => 'inventory-requests',
+            'max' => 10 * 1024 * 1024,
+            'types' => [
+                'pdf' => ['application/pdf'],
+                'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+                'doc' => ['application/msword'],
+            ],
+            'hint' => 'Use a PDF, DOCX or DOC file up to 10 MB.',
+        ],
+        // Supporting photos of an inventory request.
+        'inventory_photo' => [
+            'dir' => 'inventory-requests',
+            'max' => 10 * 1024 * 1024,
+            'types' => [
+                'jpg' => ['image/jpeg'], 'jpeg' => ['image/jpeg'],
+                'png' => ['image/png'],
+                'webp' => ['image/webp'],
+            ],
+            'hint' => 'Use JPG, PNG or WebP photos up to 10 MB each.',
         ],
         'classroom' => [
             'dir' => 'classroom-files',
@@ -214,7 +236,7 @@ class FileStore
 
     private static function directory($profile)
     {
-        return ROOT_DIR . 'runtime' . DIRECTORY_SEPARATOR . self::PROFILES[$profile]['dir'];
+        return config_item('storage_dir') . self::PROFILES[$profile]['dir'];
     }
 
     private static function clean_name($name)
