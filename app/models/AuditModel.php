@@ -5,11 +5,9 @@ defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
  * activity_logs + blockchain_ledger.
  *
  * log()   adds a row to activity_logs (dashboard "Recent activity", audit trail).
- * chain() adds a block to blockchain_ledger. Each block stores the SHA-256 of
- *         the record's data and the previous block's hash, so editing an old
- *         record breaks every block after it. Block hash formula (matches the
- *         genesis block in database/tesda_nexus.sql):
- *         sha256(index | entity_type | entity_id | action | data_hash | previous_hash)
+ * record() adds a block to blockchain_ledger for an important event; the
+ *         block logic and payloads live in app/libraries/Ledger.php and
+ *         verification in LedgerModel.
  */
 class AuditModel extends Model
 {
@@ -31,35 +29,23 @@ class AuditModel extends Model
     }
 
     /**
-     * Append a block. Call it inside the caller's transaction so the record and
-     * its block are saved together. block_index is unique, so two blocks can
-     * never claim the same position.
+     * Records an event as a block on the blockchain ledger (see app/libraries/Ledger.php).
+     * The payload is built from the records, so call it after the change is saved,
+     * inside the same transaction: the record and its block are saved together.
+     * $data is only for events whose record is about to disappear (a deletion).
      */
-    public function chain($entityType, $entityId, $action, array $data, $userId)
+    public function record($entityType, $entityId, $action, $userId, $data = null)
     {
-        $previous = $this->db->table('blockchain_ledger')
-            ->select('id, block_index, block_hash')
-            ->order_by('block_index', 'DESC')
-            ->limit(1)
-            ->get();
-
-        $index = $previous ? (int) $previous['block_index'] + 1 : 0;
-        $previousHash = $previous['block_hash'] ?? str_repeat('0', 64);
-        $dataHash = hash('sha256', json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-        $blockHash = hash('sha256', implode('|', [$index, $entityType, (string) $entityId, $action, $dataHash, $previousHash]));
-
-        $this->db->table('blockchain_ledger')->insert([
-            'block_index' => $index,
-            'previous_block_id' => $previous['id'] ?? null,
-            'entity_type' => $entityType,
-            'entity_id' => $entityId,
-            'action' => $action,
-            'data_hash' => $dataHash,
-            'previous_hash' => $previousHash,
-            'block_hash' => $blockHash,
-            'created_by' => $userId ?: null,
-        ]);
-        return $blockHash;
+        $this->call->library('Ledger');
+        $this->db->transaction();
+        try {
+            $hash = Ledger::append(fn ($sql, $params) => $this->db->raw($sql, $params), $entityType, $entityId, $action, $userId, $data);
+            $this->db->commit();
+            return $hash;
+        } catch (Throwable $e) {
+            $this->db->roll_back();
+            throw $e;
+        }
     }
 
     /** The audit trail of one record (e.g. a batch's status changes), newest first. */
