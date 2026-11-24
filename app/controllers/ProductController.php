@@ -1,19 +1,17 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/SpaController.php';
-
 /**
  * Main office stock.
  * Everyone on the admin side can see the list (learning centers pick from it
  * when requesting supplies); only the main office can change it.
  */
-class ProductController extends SpaController
+class ProductController extends MY_Controller
 {
     public function __construct()
     {
         parent::__construct();
-        $this->require_role(['admin', 'center_admin'], 'Inventory is for main office and learning center administrators.');
+        $this->require_role(['admin', 'center_admin', 'inventory_staff'], 'Inventory is for main office staff and learning center administrators.');
         $this->call->model('ProductModel');
     }
 
@@ -149,7 +147,7 @@ class ProductController extends SpaController
 
     private function image_directory()
     {
-        return ROOT_DIR . 'runtime' . DIRECTORY_SEPARATOR . 'product-images';
+        return config_item('storage_dir') . 'product-images';
     }
 
     /** Full path of a stored photo, or null when the key is empty, unsafe or the file is gone. */
