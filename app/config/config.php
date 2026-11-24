@@ -284,6 +284,13 @@ $config['cookie_samesite']         = 'Strict';
 */
 $config['cache_driver']            = 'php';
 $config['cache_dir']               = ROOT_DIR . 'runtime/cache/';
+
+/*
+| Private file storage (uploads, archives, photos). Kept outside public/ and denied
+| to the web by runtime/.htaccess; files are served only through controllers.
+| Read with config_item('storage_dir').
+*/
+$config['storage_dir']             = ROOT_DIR . 'runtime/';
 $config['cache_default_expires']   = 0;
 $config['lock_lock_timeout']       = 5;
 $config['lock_lock_sleep']         = 100000;
