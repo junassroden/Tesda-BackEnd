@@ -1,9 +1,6 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/SpaController.php';
-require_once APP_DIR . 'libraries/FileStore.php';
-
 /**
  * Enrollment documents (see StudentDocumentModel).
  *
@@ -13,12 +10,13 @@ require_once APP_DIR . 'libraries/FileStore.php';
  *   others        no access (teachers and the main office never see personal documents)
  * Files are stored outside the web root and only streamed after these checks.
  */
-class StudentDocumentController extends SpaController
+class StudentDocumentController extends MY_Controller
 {
     public function __construct()
     {
         parent::__construct();
         $this->require_role(['student', 'center_admin'], 'Student documents are only available to the student and their learning center.');
+        $this->call->library('FileStore');
         $this->call->model('StudentDocumentModel');
         $this->call->model('StudentRecordModel');
         $this->call->model('AuditModel');
