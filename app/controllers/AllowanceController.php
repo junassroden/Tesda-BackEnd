@@ -1,14 +1,12 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/SpaController.php';
-
 /**
  * Training allowance requests.
  * Learning center admins request an allowance for one batch.
  * Main office admins verify each trainee, then approve, reject, or release.
  */
-class AllowanceController extends SpaController
+class AllowanceController extends MY_Controller
 {
     /** Which status a request may move to from its current one. */
     private const NEXT_STATUS = [
