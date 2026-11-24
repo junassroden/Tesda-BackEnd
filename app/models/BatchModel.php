@@ -1,8 +1,6 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/BatchLifecycle.php';
-
 /**
  * batches (+ batch_students, batch_sessions): classes of a course, their
  * schedule and lifecycle, and the trainees in them.
@@ -22,6 +20,13 @@ class BatchModel extends Model
         'capacity', 'status', 'status_reason', 'suspended_at', 'completed_at', 'completed_by',
         'completion_mode', 'created_by',
     ];
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->call->library('BatchLifecycle'); // LavaLust loader (app/libraries/BatchLifecycle.php)
+        $this->call->library('Ledger');
+    }
 
     public const ACTIVE = ['upcoming', 'ongoing', 'suspended'];
     public const HISTORY = ['completed', 'cancelled'];
