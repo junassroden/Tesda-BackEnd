@@ -18,7 +18,8 @@ defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
  *                are reported as "needs review". Suspended batches are never touched.
  *
  * Completing a batch completes its active trainees (batch_students) and their
- * course enrollments. Each change is written to activity_logs (no user: system).
+ * course enrollments, and is recorded on the blockchain ledger. Each change is
+ * written to activity_logs (no user: system).
  */
 class BatchLifecycle
 {
@@ -88,6 +89,8 @@ class BatchLifecycle
             [$batch['id'], $batch['course_id']]
         );
         $query("UPDATE batch_students SET status = 'completed', ended_at = NOW() WHERE batch_id = ? AND status = 'active'", [$batch['id']]);
+        // The completion is recorded on the blockchain ledger (app/libraries/Ledger.php).
+        Ledger::append($query, 'batch', (int) $batch['id'], 'completed', $userId);
         return true;
     }
 
