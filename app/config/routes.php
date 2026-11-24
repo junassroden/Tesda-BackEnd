@@ -3,7 +3,7 @@
 $router->get('/', 'Welcome::index');
 
 // JSON endpoints for the React front end (Front-End/). Authentication uses the
-// session cookie; access checks live in each controller (see SpaController).
+// session cookie; access checks live in each controller (see app/kernel/MY_Controller.php).
 $router->group(['prefix' => '/api/app'], function ($router) {
     // Session
     $router->get('/session', 'AuthController::session_info');
@@ -48,13 +48,45 @@ $router->group(['prefix' => '/api/app'], function ($router) {
     $router->post('/products/{id}/image', 'ProductController::upload_image');
     $router->delete('/products/{id}/image', 'ProductController::delete_image');
 
-    // Supply requests (learning center -> main office)
+    // Inventory requests (learning center -> main office approval -> inventory personnel)
     $router->get('/inventory-requests', 'InventoryRequestController::index');
     $router->post('/inventory-requests', 'InventoryRequestController::create');
     $router->get('/inventory-requests/{id}', 'InventoryRequestController::show');
+    $router->put('/inventory-requests/{id}', 'InventoryRequestController::update');
+    $router->delete('/inventory-requests/{id}', 'InventoryRequestController::delete');
+    $router->post('/inventory-requests/{id}/files', 'InventoryRequestController::upload');
+    $router->delete('/inventory-requests/{id}/files/{fileId}', 'InventoryRequestController::remove_file');
+    $router->post('/inventory-requests/{id}/submit', 'InventoryRequestController::submit');
     $router->post('/inventory-requests/{id}/review', 'InventoryRequestController::review');
-    $router->post('/inventory-requests/{id}/release', 'InventoryRequestController::release');
-    $router->post('/inventory-requests/{id}/received', 'InventoryRequestController::received');
+    $router->post('/inventory-requests/{id}/processing', 'InventoryRequestController::start_processing');
+    $router->post('/inventory-requests/{id}/qr', 'InventoryRequestController::generate_qr');
+    $router->post('/inventory-requests/{id}/receive', 'InventoryRequestController::receive');
+    $router->post('/inventory-requests/{id}/resolve', 'InventoryRequestController::resolve');
+    $router->get('/inventory-request-files/{id}', 'InventoryRequestController::file');
+    // Delivery Management (delivery personnel; stock is deducted only on release)
+    $router->get('/deliveries', 'DeliveryController::index');
+    $router->post('/deliveries/scan', 'DeliveryController::scan');
+    $router->get('/deliveries/{id}', 'DeliveryController::show');
+    $router->post('/deliveries/{id}/release', 'DeliveryController::release');
+    $router->post('/deliveries/{id}/delivered', 'DeliveryController::delivered');
+    // Main office staff accounts and everyone's notifications
+    $router->get('/staff', 'StaffController::index');
+    $router->post('/staff', 'StaffController::create');
+    $router->put('/staff/{id}/active', 'StaffController::set_active');
+    // Blockchain ledger (main office): browse and verify
+    $router->get('/ledger', 'LedgerController::index');
+    $router->post('/ledger/verify', 'LedgerController::verify_chain');
+    $router->get('/ledger/anchors', 'LedgerController::anchors');
+    $router->post('/ledger/anchors', 'LedgerController::anchor');
+    $router->post('/ledger/anchors/check', 'LedgerController::check_anchors');
+    $router->post('/ledger/anchors/{id}/verify', 'LedgerController::verify_anchor');
+    // QR-verifiable printed documents: staff issue seals; anyone can verify one
+    $router->post('/seals', 'SealController::issue');
+    $router->get('/public/verify/{token}', 'SealController::verify');
+    $router->get('/ledger/{id}', 'LedgerController::show');
+    $router->post('/ledger/{id}/verify', 'LedgerController::verify_block');
+    $router->get('/notifications', 'NotificationController::index');
+    $router->post('/notifications/read', 'NotificationController::read');
     // Allowance requests (one per batch) and the trainee checklist
     $router->get('/allowance-requests', 'AllowanceController::index');
     $router->post('/allowance-requests', 'AllowanceController::create');
