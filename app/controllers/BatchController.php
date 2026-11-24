@@ -1,8 +1,6 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/SpaController.php';
-
 /**
  * Batches of a course: schedule, lifecycle (suspend, extend, complete, cancel),
  * trainee enrollment and transfers, training sessions and attendance, the
@@ -13,7 +11,7 @@ require_once APP_DIR . 'libraries/SpaController.php';
  *   center_admin  manages its own center's batches
  *   instructor    reads its center's batches; records attendance for batches it handles
  */
-class BatchController extends SpaController
+class BatchController extends MY_Controller
 {
     private const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
