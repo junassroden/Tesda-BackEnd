@@ -1,14 +1,12 @@
 <?php
 defined('PREVENT_DIRECT_ACCESS') OR exit('No direct script access allowed');
 
-require_once APP_DIR . 'libraries/SpaController.php';
-
 /**
  * The learning center's student records: search, create (without duplicating
  * an existing person), profile, document checklist and enrollment history.
  * Center administrators only, and only for their own center's students.
  */
-class StudentRecordController extends SpaController
+class StudentRecordController extends MY_Controller
 {
     public function __construct()
     {
