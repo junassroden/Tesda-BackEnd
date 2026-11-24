@@ -58,3 +58,96 @@ The API runs this check whenever batch lists load. To run it on a schedule as we
 | Classroom | — | — | Batches assigned to them | Batches they are in |
 
 These rules are enforced in the controllers, so hiding a button is never the only check. Another center's records return 404.
+
+## Inventory request, approval, QR and delivery upgrade
+
+Run `inventory_delivery.sql` once, after `training_management.sql`. Like that script it checks `information_schema` before each change, so running it again is safe, and it keeps existing rows: earlier requests are mapped to the new statuses (`in_review` → `pending`, `released` → `in_transit`, `received` → `completed`).
+
+It builds on the existing inventory tables instead of adding new ones: `products` (stock), `stock_movements` (inventory transaction history), `inventory_requests` and `inventory_request_items`. It adds:
+
+- **Two main office roles**, `inventory_staff` and `delivery_staff`. Main office administrators create these accounts under **Main office staff**.
+- **Request letters**: a letter written in the app (date, recipient, subject, body, signatory) or an uploaded PDF, DOCX or DOC file, plus up to 10 supporting photos (`inventory_request_files`, stored under `runtime/inventory-requests`).
+- **Statuses**: draft → pending → approved → processing → ready_for_delivery → in_transit → delivered → completed. A disapproved request has status `rejected`, shown as "Disapproved". Receipt with different quantities sets `discrepancy` until the main office resolves it.
+- **QR deliveries** (`inventory_deliveries`, `inventory_delivery_items`). The QR code holds only a random 64-character token. A unique key on `active_request_id` stops a request from having two active QR codes.
+- `stock_movements.delivery_id`, which links each release to its delivery.
+
+### When stock changes
+
+| Step | Who | Stock |
+|---|---|---|
+| Submit, approve, start preparing | Learning center, main office admin, inventory personnel | Unchanged |
+| Generate QR code | Inventory personnel | Unchanged. The units are held for this delivery, so other QR codes cannot count them too. |
+| Scan, validate, confirm release | Delivery personnel | **Deducted once**, recorded in `stock_movements` and the blockchain ledger |
+| Mark delivered, confirm receipt | Delivery personnel, learning center | Unchanged |
+
+The release runs in one transaction. Its first statement claims the delivery only while `status = 'ready' AND qr_used_at IS NULL`, so scanning the same QR code twice, double clicking or sending requests in parallel cannot deduct stock twice. Each item is taken with a conditional `quantity >= n` update, so stock never goes negative. If any item is short, the whole release is rolled back.
+
+The scanner needs HTTPS, or `localhost`, before a browser will open the camera. Without a camera, delivery personnel can enter the delivery reference number (for example `DLV-2026-0001`), which is printed under the QR code.
+
+## Blockchain ledger verification
+
+Run `blockchain_ledger.sql` once, after `inventory_delivery.sql`. Running it again is safe. It adds `blockchain_ledger.payload_format`, tags the existing blocks with how they were built, and allows `batch` blocks.
+
+**What is recorded.** `AuditModel::record()` writes one block per important event. The block is written inside the same database transaction as the change, so a change and its block are always saved together:
+
+| Record | Events |
+|---|---|
+| Inventory request | submitted, approved, disapproved (`rejected`), receipt confirmed (`received`), `discrepancy`, `resolved` |
+| Delivery | QR code `generated`, `released` (stock deducted), `delivered` |
+| Student document | `verified` |
+| Training batch | `completed` (automatic or confirmed; the CLI job records it too) |
+| Archived document | `archived` (with the file's SHA-256, now also saved in `document_archive.file_hash`), `deleted` |
+| Allowance request | `released` |
+
+**What a block holds.** A block holds only fingerprints: `data_hash` is the SHA-256 of the event's payload, and `block_hash` is the SHA-256 of `index | type | id | action | data_hash | previous_hash`. It never holds names, documents or bank details. `app/libraries/Ledger.php` builds each payload from facts that never change after the event, such as quantities, timestamps, the people involved and file fingerprints.
+
+**How verification works.** Main office administrators use **Blockchain ledger** in the sidebar:
+
+- **Verify whole chain** walks every block from the genesis block. It checks that the indexes are in order, that each block links to the one before it, and that each block hash matches the block's contents. It names the first broken block.
+- **Verify this block** rebuilds the payload from today's records and compares fingerprints. For files (archived documents, verified student documents, request letters and photos) it also re-hashes the stored file on disk. Each result is saved in `blockchain_verifications`.
+
+| Result | Meaning |
+|---|---|
+| Verified | Everything matches. |
+| Tampered | A record, a file or the block itself changed after the event. |
+| Record missing | The record is gone and its deletion was not recorded. |
+| Deleted (recorded) | The record is gone, and its deletion is on the ledger. |
+| Chain only | The block's place in the chain is checked, but its content cannot be rebuilt from the records. This applies to the two demo blocks from `tesda_nexus.sql`, which were hashed from hand-written strings. |
+
+The **Verified on ledger** badge on inventory requests, deliveries, student documents and archived documents runs the same record check every time the page loads. It skips the file re-hashing, and it does not save a result.
+
+**Limits.** This ledger lives in the same database as the records. It detects edits made through the app or by hand in the records, the files or single blocks. It cannot stop someone with full database access from rewriting the whole chain consistently. The protection against that is anchoring: publishing the latest block hash to a public blockchain, which is the planned next step.
+
+## Public anchoring and QR-verifiable printouts
+
+Run `blockchain_anchoring.sql` once, after `blockchain_ledger.sql`. Running it again is safe. It adds `blockchain_anchors` and `document_seals`.
+
+**Anchoring in Bitcoin (OpenTimestamps).** The newest block's hash is sent to the free public OpenTimestamps calendars, which put it into a Bitcoin transaction within a few hours. Every block contains the hash of the block before it, so one anchor proves the whole chain up to that block existed unchanged at that time. Even someone with full database access can no longer rewrite that part of the chain without it showing.
+
+- Only that 64-character hash leaves the server. No records and no personal data are sent.
+- Anchor from **Blockchain ledger → Anchor newest block** (and **Check confirmations** later), or schedule the CLI command every few hours:
+  - Program: `C:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe`
+  - Arguments: `lava ledger:anchor`
+  - Start in: `C:\laragon\www\TesdaNexus\Back-End`
+
+  The command collects confirmations, then anchors the newest block if it is not anchored yet. `--check-only` only collects confirmations.
+- Confirmation: the stored proof is followed to a Bitcoin block, and that block's merkle root is checked against a public block explorer (Blockstream, with mempool.space as fallback). **Verify** on an anchor repeats the whole check from scratch.
+- The server needs internet access to `*.opentimestamps.org`, `a.pool.eternitywall.com` and `blockstream.info` / `mempool.space`.
+
+**QR seals on printed sheets.** The information sheet, document checklist, enrollment packet and batch records print with a QR code and a 24-character code.
+
+- **At print time** the sheet's content is fingerprinted from the records (SHA-256) and the seal is recorded on the ledger. Printing an unchanged sheet again reuses the same seal.
+- **Scanning** opens `/verify/<code>`, a public page that needs no login. It reports:
+
+  | Result | Meaning |
+  |---|---|
+  | Authentic and current | The records still match the paper. |
+  | Issued, but no longer current | The records changed after printing. |
+  | Cannot be trusted | The seal's ledger block, or a block before it, failed its check. |
+  | Not found | No document has this code. |
+
+  It also reports whether that part of the chain is anchored in Bitcoin.
+- **Privacy:** the public page shows only the document type, issuing center, date, and a masked student number with initials (or the batch name). That is enough to match the paper without exposing personal data.
+- **QR address:** the QR code contains the address the sheet was printed from. Print from the real server address, not `localhost`, so phones can open it.
+
+**Going live with real data.** Sample blocks, anchors and seals stay in the chain. Before entering real records, clear the sample data and the ledger tables together (`blockchain_verifications`, `document_seals`, `blockchain_anchors`, `blockchain_ledger`), then insert a new genesis block, so the chain starts clean. Hashes already sent to OpenTimestamps are only fingerprints of sample data and are harmless.
